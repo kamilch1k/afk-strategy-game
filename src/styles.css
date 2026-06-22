@@ -48,6 +48,10 @@ body.menu-open #world {
   cursor: grabbing;
 }
 
+#world.rotating {
+  cursor: all-scroll;
+}
+
 .top-hud,
 .left-panel,
 .right-panel,

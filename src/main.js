@@ -95,6 +95,8 @@ const MAP_SEED = Math.random() * 10000;
 const MAX_PIXEL_RATIO = 1.15;
 const ISO_YAW = -Math.PI / 4;
 const ISO_PITCH = 0.82;
+const MIN_PITCH = 0.42; // clamp camera pitch while rotating (radians)
+const MAX_PITCH = 1.4;
 const MIN_ZOOM = 34;
 const MAX_ZOOM = 215;
 const CAMERA_LOOK_HEIGHT = 1.1;
@@ -334,14 +336,22 @@ const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, -1000, 2000);
 const cameraState = {
   target: new THREE.Vector3(0, CAMERA_LOOK_HEIGHT, 0),
   distance: 82,
+  yaw: ISO_YAW,
+  pitch: ISO_PITCH,
 };
-const CAMERA_DIR = new THREE.Vector3(
-  Math.sin(ISO_YAW) * Math.cos(ISO_PITCH),
-  Math.sin(ISO_PITCH),
-  Math.cos(ISO_YAW) * Math.cos(ISO_PITCH),
-);
-const PAN_FORWARD = new THREE.Vector3(Math.sin(ISO_YAW), 0, Math.cos(ISO_YAW)).normalize();
-const PAN_RIGHT = new THREE.Vector3(PAN_FORWARD.z, 0, -PAN_FORWARD.x).normalize();
+// Camera basis, recomputed whenever yaw/pitch change (middle-mouse rotate).
+// Pan and keyboard movement read these so they stay screen-relative after rotating.
+const CAMERA_DIR = new THREE.Vector3();
+const PAN_FORWARD = new THREE.Vector3();
+const PAN_RIGHT = new THREE.Vector3();
+function recomputeCameraBasis() {
+  const y = cameraState.yaw;
+  const p = cameraState.pitch;
+  CAMERA_DIR.set(Math.sin(y) * Math.cos(p), Math.sin(p), Math.cos(y) * Math.cos(p));
+  PAN_FORWARD.set(Math.sin(y), 0, Math.cos(y)).normalize();
+  PAN_RIGHT.set(PAN_FORWARD.z, 0, -PAN_FORWARD.x).normalize();
+}
+recomputeCameraBasis();
 
 const terrainGroup = new THREE.Group();
 const resourceGroup = new THREE.Group();
@@ -438,6 +448,8 @@ window.__afkStrategyDebug = {
     factionsAlive: factions.filter((f) => !f.defeated).length,
     playerFood: Math.floor(playerFaction?.resources.food ?? 0),
     kills: game.stats.kills,
+    yaw: Number(cameraState.yaw.toFixed(3)),
+    pitch: Number(cameraState.pitch.toFixed(3)),
   }),
 };
 
@@ -2336,7 +2348,8 @@ function onPointerDown(event) {
   const startEntity = entityAtScreen(event.clientX, event.clientY);
   const leftButton = event.button === 0;
   const rightButton = event.button === 2;
-  if (!leftButton && !rightButton) return;
+  const middleButton = event.button === 1;
+  if (!leftButton && !rightButton && !middleButton) return;
   pointer.active = true;
   pointer.id = event.pointerId;
   pointer.button = event.button;
@@ -2348,10 +2361,12 @@ function onPointerDown(event) {
   pointer.startEntity = startEntity;
   pointer.selecting = leftButton;
   pointer.panning = rightButton;
+  pointer.rotating = middleButton;
   if (pointer.selecting) startSelectionBox(event.clientX, event.clientY);
   if (pointer.selecting) canvas.classList.add("selecting");
   if (pointer.panning) canvas.classList.add("panning");
-  if (pointer.panning || event.button !== 0) event.preventDefault();
+  if (pointer.rotating) canvas.classList.add("rotating");
+  if (pointer.panning || pointer.rotating || event.button !== 0) event.preventDefault();
   canvas.setPointerCapture?.(event.pointerId);
 }
 
@@ -2368,6 +2383,11 @@ function onPointerMove(event) {
   pointer.moved = pointer.moved || Math.hypot(totalDx, totalDy) > 5;
   pointer.x = event.clientX;
   pointer.y = event.clientY;
+  if (pointer.rotating) {
+    if (pointer.moved) rotateCamera(dx, dy);
+    event.preventDefault();
+    return;
+  }
   if (pointer.panning) {
     if (pointer.moved) panCamera(dx, dy);
     event.preventDefault();
@@ -2386,12 +2406,13 @@ function onPointerUp(event) {
   pointer.id = null;
   pointer.selecting = false;
   pointer.panning = false;
+  pointer.rotating = false;
   try {
     canvas.releasePointerCapture?.(event.pointerId);
   } catch {
     // The browser may already release capture after a context-menu/right-button gesture.
   }
-  canvas.classList.remove("panning", "selecting");
+  canvas.classList.remove("panning", "selecting", "rotating");
   hideSelectionBox();
   if (wasSelecting) {
     if (pointer.moved) selectInBox(pointer.startX, pointer.startY, event.clientX, event.clientY);
@@ -2402,6 +2423,13 @@ function onPointerUp(event) {
     if (pointer.button === 2) issueOrder(point, target);
   }
   pointer.startEntity = null;
+}
+
+function rotateCamera(dx, dy) {
+  cameraState.yaw += dx * 0.005; // horizontal drag orbits; vertical drag tilts
+  cameraState.pitch = clamp(cameraState.pitch - dy * 0.004, MIN_PITCH, MAX_PITCH);
+  recomputeCameraBasis();
+  updateCamera();
 }
 
 function panCamera(dx, dy) {
@@ -2450,6 +2478,9 @@ function resetCamera() {
   cameraState.target.copy(playerFaction?.hq?.position ?? new THREE.Vector3(0, 0, 0));
   cameraState.target.y = CAMERA_LOOK_HEIGHT;
   cameraState.distance = 135;
+  cameraState.yaw = ISO_YAW;
+  cameraState.pitch = ISO_PITCH;
+  recomputeCameraBasis();
   applyCameraFrustum();
   updateCamera();
 }
