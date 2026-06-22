@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="icon" type="image/png" href="%BASE_URL%assets/game-icon.png" />
+    <title>Goblin Tower Offense 3D</title>
+  </head>
+  <body>
+    <div id="app">
+      <canvas id="world"></canvas>
+
+      <header class="top-hud" aria-label="Battle status">
+        <section class="status-block">
+          <span class="status-label">Stronghold</span>
+          <span id="baseReadout" class="status-value">100%</span>
+          <div class="meter" aria-hidden="true"><span id="baseMeter"></span></div>
+        </section>
+        <section class="status-block">
+          <span class="status-label">Mana</span>
+          <span id="rageReadout" class="status-value">0 / 10</span>
+          <div class="meter rage" aria-hidden="true"><span id="rageMeter"></span></div>
+        </section>
+        <section class="status-block compact">
+          <span class="status-label">Raid</span>
+          <span id="raidReadout" class="status-value">00:00</span>
+        </section>
+      </header>
+
+      <nav class="camera-tools" aria-label="Camera controls">
+        <button id="rotateLeft" class="icon-button" title="Rotate left" aria-label="Rotate left">
+          <i data-lucide="rotate-ccw"></i>
+        </button>
+        <button id="rotateRight" class="icon-button" title="Rotate right" aria-label="Rotate right">
+          <i data-lucide="rotate-cw"></i>
+        </button>
+        <button id="resetView" class="icon-button" title="Reset view" aria-label="Reset view">
+          <i data-lucide="home"></i>
+        </button>
+        <button id="zoomIn" class="icon-button" title="Zoom in" aria-label="Zoom in">
+          <i data-lucide="zoom-in"></i>
+        </button>
+        <button id="zoomOut" class="icon-button" title="Zoom out" aria-label="Zoom out">
+          <i data-lucide="zoom-out"></i>
+        </button>
+        <button id="pauseToggle" class="icon-button" title="Pause" aria-label="Pause">
+          <i data-lucide="pause"></i>
+        </button>
+      </nav>
+
+      <aside class="war-panel" aria-label="Raid details">
+        <div class="panel-row">
+          <span>Goblins</span>
+          <strong id="hordeReadout">0</strong>
+        </div>
+        <div class="panel-row">
+          <span>Defenders</span>
+          <strong id="defenderReadout">0</strong>
+        </div>
+        <div class="panel-row">
+          <span>Structures</span>
+          <strong id="structureReadout">0</strong>
+        </div>
+        <div class="panel-row">
+          <span>Spoils</span>
+          <strong id="spoilsReadout">0</strong>
+        </div>
+        <div class="panel-row">
+          <span>Territory</span>
+          <strong id="territoryReadout">0</strong>
+        </div>
+      </aside>
+
+      <main id="battleMessage" class="battle-message" aria-live="polite"></main>
+
+      <section id="deck" class="deck" aria-label="Troop cards"></section>
+
+      <section id="mainMenu" class="menu-screen main-menu" aria-label="Main menu">
+        <div class="menu-panel">
+          <p class="menu-kicker">Goblin command table</p>
+          <h1>Goblin Tower Offense 3D</h1>
+          <div class="menu-actions">
+            <button id="startRaid" class="menu-button primary" type="button">Start Raid</button>
+          </div>
+          <div class="stats-grid" aria-label="Raid stats">
+            <div><span>Best Time</span><strong id="menuBestTime">00:00</strong></div>
+            <div><span>Best Spoils</span><strong id="menuBestSpoils">0</strong></div>
+            <div><span>Best Damage</span><strong id="menuBestDamage">0</strong></div>
+            <div><span>Raids</span><strong id="menuRaids">0</strong></div>
+          </div>
+        </div>
+      </section>
+
+      <section id="pauseMenu" class="menu-screen pause-menu hidden" aria-label="Pause menu">
+        <div class="menu-panel">
+          <p class="menu-kicker">Raid paused</p>
+          <h2>Battle Orders</h2>
+          <div class="menu-actions">
+            <button id="resumeRaid" class="menu-button primary" type="button">Resume</button>
+            <button id="restartRaid" class="menu-button" type="button">Restart</button>
+            <button id="exitToMenu" class="menu-button danger" type="button">Main Menu</button>
+          </div>
+          <div class="stats-grid live" aria-label="Current raid stats">
+            <div><span>Time</span><strong id="statTime">00:00</strong></div>
+            <div><span>Spoils</span><strong id="statSpoils">0</strong></div>
+            <div><span>Damage</span><strong id="statDamage">0</strong></div>
+            <div><span>Structures</span><strong id="statStructures">0</strong></div>
+            <div><span>Defeated</span><strong id="statDefeated">0</strong></div>
+            <div><span>Lost</span><strong id="statLost">0</strong></div>
+            <div><span>Spawned</span><strong id="statSpawned">0</strong></div>
+            <div><span>Buildings</span><strong id="statBuildings">0</strong></div>
+          </div>
+        </div>
+      </section>
+    </div>
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>
