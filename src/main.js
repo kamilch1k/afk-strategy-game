@@ -1591,7 +1591,7 @@ function createFaction(blueprint) {
     defeated: false,
     tech: 0,
     nextThink: rand(0.2, 1.8),
-    waveTimer: rand(18, 32),
+    waveTimer: rand(10, 18),
     lastAttackAt: 0,
     rallyPoint: blueprint.start.clone(),
   };
@@ -2277,7 +2277,7 @@ function thinkFaction(faction, dt) {
   // (Local defense is handled per-unit in updateCombatUnit's guard state — no army-wide recall needed.)
   const ready = armyUnits(faction);
   const waveMin = Math.max(6, Math.floor(targetArmy * 0.4));
-  const escalation = clamp(game.time / 420, 0, 1); // total war ramps up over ~7 min so games conclude
+  const escalation = clamp(game.time / 330, 0, 1); // total war ramps up over ~5.5 min so games conclude
   if (faction.waveTimer <= 0 && ready.length >= waveMin && Math.random() < directive.aggression + 0.15 + escalation * 0.3) {
     const target = enemyHqTarget(faction);
     if (target) {
@@ -2300,7 +2300,7 @@ function checkWinner() {
     const champ = alive[0] ?? null; // length 0 == the last HQs fell on the same frame: a draw
     game.winner = champ ?? { name: "No one", shortName: "Draw", player: false };
     winnerReadout.textContent = champ ? `${champ.shortName} victory` : "Draw";
-    showMessage(champ ? `${champ.name} controls the map` : "Mutual destruction — a draw");
+    showVictory(champ ? `${champ.shortName.toUpperCase()} VICTORY` : "MUTUAL DESTRUCTION");
     logEvent(champ ? `${champ.name} wins the skirmish.` : "Every HQ has fallen — the skirmish is a draw.");
     const stats = loadStats();
     stats.sessions += 1;
@@ -2605,7 +2605,13 @@ function showMessage(text) {
   game.lastMessageAt = game.time;
 }
 
+function showVictory(text) {
+  battleMessage.textContent = text;
+  battleMessage.classList.add("show", "victory");
+}
+
 function updateMessage() {
+  if (battleMessage.classList.contains("victory")) return; // the end-of-match banner stays up until a new game
   if (battleMessage.classList.contains("show") && game.time - game.lastMessageAt > 1.6) {
     battleMessage.classList.remove("show");
   }
@@ -2757,6 +2763,7 @@ function startGame() {
   game.started = true;
   game.paused = false;
   game.stats.sessions += 1;
+  battleMessage.classList.remove("victory"); // clear last match's victory banner
   mainMenu.classList.add("hidden");
   pauseMenu.classList.add("hidden");
   setMenuOpen(false);
