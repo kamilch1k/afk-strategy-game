@@ -98,6 +98,7 @@ const ISO_PITCH = 0.82;
 const MIN_ZOOM = 34;
 const MAX_ZOOM = 116;
 const CAMERA_LOOK_HEIGHT = 1.1;
+const VIEW_TANGENT = Math.tan((31 * Math.PI) / 360); // preserve the old 31° vertical view scale across the ortho zoom range
 const RESOURCE_LOW_WATER = 85;
 const THINK_INTERVAL = 2.1;
 const UI_INTERVAL = 0.18;
@@ -121,6 +122,10 @@ const distSq2 = (ax, az, bx, bz) => (ax - bx) * (ax - bx) + (az - bz) * (az - bz
 const mapNoise = (x, z, seed = 0) => {
   const value = Math.sin((x + 17.37) * 18.179 + (z - 4.91) * 41.233 + seed * 97.17) * 43758.5453;
   return value - Math.floor(value);
+};
+const removeFrom = (array, item) => {
+  const index = array.indexOf(item);
+  if (index >= 0) array.splice(index, 1);
 };
 
 const DIRECTIVES = {
@@ -318,11 +323,19 @@ renderer.outputColorSpace = THREE.SRGBColorSpace;
 renderer.setPixelRatio(Math.min(MAX_PIXEL_RATIO, window.devicePixelRatio || 1));
 renderer.setSize(window.innerWidth, window.innerHeight);
 
-const camera = new THREE.PerspectiveCamera(31, window.innerWidth / window.innerHeight, 0.1, 900);
+// ponytail: orthographic so a pan translates the whole scene uniformly — no perspective parallax, props stay glued to the ground
+const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, -1000, 2000);
 const cameraState = {
   target: new THREE.Vector3(0, CAMERA_LOOK_HEIGHT, 0),
   distance: 82,
 };
+const CAMERA_DIR = new THREE.Vector3(
+  Math.sin(ISO_YAW) * Math.cos(ISO_PITCH),
+  Math.sin(ISO_PITCH),
+  Math.cos(ISO_YAW) * Math.cos(ISO_PITCH),
+);
+const PAN_FORWARD = new THREE.Vector3(Math.sin(ISO_YAW), 0, Math.cos(ISO_YAW)).normalize();
+const PAN_RIGHT = new THREE.Vector3(PAN_FORWARD.z, 0, -PAN_FORWARD.x).normalize();
 
 const terrainGroup = new THREE.Group();
 const resourceGroup = new THREE.Group();
@@ -335,6 +348,8 @@ scene.add(skyGroup, terrainGroup, resourceGroup, structureGroup, unitGroup, effe
 const textureCache = new Map();
 const materials = {};
 const cubeGeometry = new THREE.BoxGeometry(1, 1, 1);
+const barFillGeometry = cubeGeometry.clone(); // left-anchored unit cube for health-bar fills; never mutate the shared cubeGeometry
+barFillGeometry.translate(0.5, 0, 0);
 const ringGeometry = new THREE.RingGeometry(0.58, 0.68, 32);
 ringGeometry.rotateX(-Math.PI / 2);
 const structureRingGeometry = new THREE.RingGeometry(1.8, 2.04, 48);
@@ -968,7 +983,7 @@ function createHealthBar(entity, width = 2) {
   const group = new THREE.Group();
   const bg = addBlock(group, new THREE.MeshBasicMaterial({ color: 0x2a1e1e }), 0, 0, 0, width, 0.08, 0.08);
   const fill = addBlock(group, new THREE.MeshBasicMaterial({ color: 0x78d765 }), -width / 2, 0.01, 0, width, 0.09, 0.1);
-  fill.geometry.translate(0.5, 0, 0);
+  fill.geometry = barFillGeometry; // shared left-anchored geometry — do NOT mutate the global cubeGeometry
   group.userData = { fill, bg, width };
   group.visible = false;
   entity.healthBar = group;
@@ -1008,8 +1023,9 @@ function syncStructureToTerrain(structure) {
 }
 
 function enforceStructureAnchors() {
+  // structures are static (pinned once in createStructure) — only the health bars need to keep facing the camera
   for (const structure of structures) {
-    if (structure.alive) syncStructureToTerrain(structure);
+    if (structure.alive && structure.healthBar?.visible) structure.healthBar.lookAt(camera.position);
   }
 }
 
@@ -1402,8 +1418,10 @@ function obstacleAvoidance(unit, direction, targetEntity = null) {
     const minDist = blocker.radius + unit.radius + 0.35;
     const d2 = dx * dx + dz * dz;
     if (d2 > minDist * minDist || d2 < 0.0001) continue;
-    const push = new THREE.Vector3(dx, 0, dz).normalize().multiplyScalar((minDist * minDist - d2) / (minDist * minDist));
-    desired.add(push.multiplyScalar(1.6));
+    const len = Math.sqrt(d2);
+    const strength = ((minDist * minDist - d2) / (minDist * minDist)) * 1.6;
+    desired.x += (dx / len) * strength;
+    desired.z += (dz / len) * strength;
   }
   if (desired.lengthSq() < 0.001) desired.copy(direction);
   return desired.normalize();
@@ -1445,7 +1463,7 @@ function updateWorker(unit, dt) {
   }
   if (unit.cargo > 0) {
     const dropoff = nearestDropoff(unit);
-    if (!dropoff) return;
+    if (!dropoff) { unit.cargo = 0; unit.cargoType = null; unit.order.target = null; return; } // no dropoff left: dump cargo, don't freeze
     const distance = moveToward(unit, dropoff.position, dt, dropoff.radius + 0.8, dropoff);
     if (distance <= dropoff.radius + 1) {
       unit.faction.resources[unit.cargoType] += unit.cargo;
@@ -1473,6 +1491,7 @@ function updateWorker(unit, dt) {
       node.group.scale.setScalar(clamp(node.amount / node.maxAmount, 0.28, 1));
       if (node.amount <= 0) {
         resourceGroup.remove(node.group);
+        removeFrom(resourceNodes, node);
       }
     }
   }
@@ -1512,8 +1531,12 @@ function updateCombatUnit(unit, dt) {
   }
 }
 
+function shotMaterial(faction) {
+  return faction.shotMaterial ?? (faction.shotMaterial = new THREE.MeshBasicMaterial({ color: faction.accent }));
+}
+
 function createProjectile(source, target) {
-  const material = new THREE.MeshBasicMaterial({ color: source.faction.accent });
+  const material = shotMaterial(source.faction);
   const mesh = new THREE.Mesh(shotGeometry, material);
   mesh.position.copy(source.position);
   mesh.position.y += 0.55;
@@ -1537,7 +1560,9 @@ function updateProjectiles(dt) {
       effectGroup.remove(projectile.mesh);
       continue;
     }
-    tmpVec.copy(projectile.target.position).add(new THREE.Vector3(0, projectile.target.kind === "structure" ? 1.2 : 0.55, 0)).sub(projectile.mesh.position);
+    tmpVec.copy(projectile.target.position);
+    tmpVec.y += projectile.target.kind === "structure" ? 1.2 : 0.55;
+    tmpVec.sub(projectile.mesh.position);
     if (tmpVec.lengthSq() < 0.22) {
       projectile.alive = false;
       damageEntity(projectile.target, projectile.damage, projectile.faction);
@@ -1590,18 +1615,23 @@ function damageEntity(entity, amount, sourceFaction) {
   entity.alive = false;
   if (entity.kind === "unit") {
     unitGroup.remove(entity.sprite, entity.shadow, entity.selectRing);
+    removeFrom(entity.faction.units, entity);
     if (entity.faction.player) game.stats.losses += 1;
     if (sourceFaction?.player && entity.faction !== sourceFaction) game.stats.kills += 1;
   } else if (entity.kind === "structure") {
     structureGroup.remove(entity.group, entity.selectRing, entity.healthBar);
-    blockers.forEach((blocker) => {
-      if (blocker.owner === entity) blocker.owner.alive = false;
-    });
+    for (let i = blockers.length - 1; i >= 0; i -= 1) {
+      if (blockers[i].owner === entity) blockers.splice(i, 1);
+    }
+    removeFrom(entity.faction.structures, entity);
+    removeFrom(structures, entity);
     if (entity.type === "hq") {
       entity.faction.defeated = true;
-      entity.faction.units.forEach((unit) => {
-        if (unit.alive) unit.order = { type: "attack", target: sourceFaction?.hq ?? null };
-      });
+      if (sourceFaction?.hq) {
+        for (const unit of entity.faction.units) {
+          if (unit.alive && unit.role === "army") unit.order = { type: "attack", target: sourceFaction.hq };
+        }
+      }
       logEvent(`${entity.faction.shortName} HQ has fallen.`);
     }
     if (sourceFaction?.player && entity.faction !== sourceFaction) game.stats.kills += 3;
@@ -1640,7 +1670,7 @@ function updateStructures(dt) {
       const target = nearestEnemyEntity(structure.position, faction, definition.weaponRange);
       if (!target) continue;
       structure.reload = definition.cooldown;
-      const material = new THREE.MeshBasicMaterial({ color: faction.accent });
+      const material = shotMaterial(faction);
       const mesh = new THREE.Mesh(shotGeometry, material);
       mesh.position.copy(structure.position);
       mesh.position.y += structureFireHeight(structure.type);
@@ -1750,16 +1780,17 @@ function updateFactions(dt) {
 function checkWinner() {
   if (game.winner) return;
   const alive = factions.filter((faction) => !faction.defeated && faction.hq?.alive);
-  if (alive.length === 1 && game.started) {
-    game.winner = alive[0];
-    winnerReadout.textContent = `${alive[0].shortName} victory`;
-    showMessage(`${alive[0].name} controls the map`);
-    logEvent(`${alive[0].name} wins the skirmish.`);
+  if (game.started && alive.length <= 1) {
+    const champ = alive[0] ?? null; // length 0 == the last HQs fell on the same frame: a draw
+    game.winner = champ ?? { name: "No one", shortName: "Draw", player: false };
+    winnerReadout.textContent = champ ? `${champ.shortName} victory` : "Draw";
+    showMessage(champ ? `${champ.name} controls the map` : "Mutual destruction — a draw");
+    logEvent(champ ? `${champ.name} wins the skirmish.` : "Every HQ has fallen — the skirmish is a draw.");
     const stats = loadStats();
     stats.sessions += 1;
     stats.bestTime = Math.max(stats.bestTime, game.time);
     stats.bestKills = Math.max(stats.bestKills, game.stats.kills);
-    if (alive[0].player) stats.wins += 1;
+    if (champ?.player) stats.wins += 1;
     saveStats(stats);
     updateMenuStats();
   }
@@ -1820,12 +1851,13 @@ function selectInBox(x0, y0, x1, y1) {
   const maxX = Math.max(x0, x1);
   const minY = Math.min(y0, y1);
   const maxY = Math.max(y0, y1);
+  const rect = canvas.getBoundingClientRect();
   const selected = [];
   for (const unit of playerFaction.units) {
     if (!unit.alive) continue;
-    const projected = unit.position.clone().project(camera);
-    const sx = (projected.x * 0.5 + 0.5) * window.innerWidth;
-    const sy = (-projected.y * 0.5 + 0.5) * window.innerHeight;
+    const projected = tmpVec.copy(unit.position).project(camera);
+    const sx = rect.left + (projected.x * 0.5 + 0.5) * rect.width;
+    const sy = rect.top + (-projected.y * 0.5 + 0.5) * rect.height;
     if (sx >= minX && sx <= maxX && sy >= minY && sy <= maxY) selected.push(unit);
   }
   selectEntities(selected);
@@ -1929,7 +1961,6 @@ function onPointerMove(event) {
     if (event.target === canvas) hoverEntity = entityAtScreen(event.clientX, event.clientY);
     return;
   }
-  if (!pointer.active) return;
   const dx = event.clientX - pointer.x;
   const dy = event.clientY - pointer.y;
   const totalDx = event.clientX - pointer.startX;
@@ -1975,47 +2006,51 @@ function onPointerUp(event) {
 
 function panCamera(dx, dy) {
   const scale = cameraState.distance / Math.min(window.innerWidth, window.innerHeight) * 0.72;
-  const forward = new THREE.Vector3(Math.sin(ISO_YAW), 0, Math.cos(ISO_YAW)).normalize();
-  const right = new THREE.Vector3(forward.z, 0, -forward.x).normalize();
-  cameraState.target.addScaledVector(right, dx * scale);
-  cameraState.target.addScaledVector(forward, -dy * scale);
+  // drag the map: the world follows the cursor (both axes)
+  cameraState.target.addScaledVector(PAN_RIGHT, -dx * scale);
+  cameraState.target.addScaledVector(PAN_FORWARD, -dy * scale);
   cameraState.target.x = clamp(cameraState.target.x, -HALF_MAP + 8, HALF_MAP - 8);
   cameraState.target.z = clamp(cameraState.target.z, -HALF_MAP + 8, HALF_MAP - 8);
 }
 
 function updateKeyboardCamera(dt) {
   const speed = cameraState.distance * dt * 0.42;
-  const forward = new THREE.Vector3(Math.sin(ISO_YAW), 0, Math.cos(ISO_YAW)).normalize();
-  const right = new THREE.Vector3(forward.z, 0, -forward.x).normalize();
-  if (keys.has("KeyW") || keys.has("ArrowUp")) cameraState.target.addScaledVector(forward, speed);
-  if (keys.has("KeyS") || keys.has("ArrowDown")) cameraState.target.addScaledVector(forward, -speed);
-  if (keys.has("KeyA") || keys.has("ArrowLeft")) cameraState.target.addScaledVector(right, -speed);
-  if (keys.has("KeyD") || keys.has("ArrowRight")) cameraState.target.addScaledVector(right, speed);
+  if (keys.has("KeyW") || keys.has("ArrowUp")) cameraState.target.addScaledVector(PAN_FORWARD, -speed);
+  if (keys.has("KeyS") || keys.has("ArrowDown")) cameraState.target.addScaledVector(PAN_FORWARD, speed);
+  if (keys.has("KeyA") || keys.has("ArrowLeft")) cameraState.target.addScaledVector(PAN_RIGHT, -speed);
+  if (keys.has("KeyD") || keys.has("ArrowRight")) cameraState.target.addScaledVector(PAN_RIGHT, speed);
   cameraState.target.x = clamp(cameraState.target.x, -HALF_MAP + 8, HALF_MAP - 8);
   cameraState.target.z = clamp(cameraState.target.z, -HALF_MAP + 8, HALF_MAP - 8);
 }
 
+function applyCameraFrustum() {
+  const aspect = window.innerWidth / window.innerHeight;
+  const halfH = cameraState.distance * VIEW_TANGENT;
+  camera.left = -halfH * aspect;
+  camera.right = halfH * aspect;
+  camera.top = halfH;
+  camera.bottom = -halfH;
+  camera.updateProjectionMatrix();
+}
+
 function updateCamera() {
-  const direction = new THREE.Vector3(
-    Math.sin(ISO_YAW) * Math.cos(ISO_PITCH),
-    Math.sin(ISO_PITCH),
-    Math.cos(ISO_YAW) * Math.cos(ISO_PITCH),
-  );
   tmpCameraLook.copy(cameraState.target);
   tmpCameraLook.y = CAMERA_LOOK_HEIGHT;
-  camera.position.copy(tmpCameraLook).addScaledVector(direction, cameraState.distance);
+  camera.position.copy(tmpCameraLook).addScaledVector(CAMERA_DIR, cameraState.distance);
   camera.lookAt(tmpCameraLook);
+  skyGroup.position.set(camera.position.x, 0, camera.position.z); // keep the backdrop centered on the camera (infinite-sky feel)
 }
 
 function zoomCamera(factor) {
   cameraState.distance = clamp(cameraState.distance * factor, MIN_ZOOM, MAX_ZOOM);
-  updateCamera();
+  applyCameraFrustum();
 }
 
 function resetCamera() {
   cameraState.target.copy(playerFaction?.hq?.position ?? new THREE.Vector3(0, 0, 0));
   cameraState.target.y = CAMERA_LOOK_HEIGHT;
   cameraState.distance = 82;
+  applyCameraFrustum();
   updateCamera();
 }
 
@@ -2231,8 +2266,7 @@ function bindEvents() {
   window.addEventListener("resize", () => {
     renderer.setPixelRatio(Math.min(MAX_PIXEL_RATIO, window.devicePixelRatio || 1));
     renderer.setSize(window.innerWidth, window.innerHeight);
-    camera.aspect = window.innerWidth / window.innerHeight;
-    camera.updateProjectionMatrix();
+    applyCameraFrustum();
     updateCamera();
   });
   resetViewButton.addEventListener("click", resetCamera);
@@ -2272,7 +2306,7 @@ function animate() {
     checkWinner();
     updateMessage();
   }
-  if (skySphere) skySphere.rotation.y += (dt || 0.002) * 0.01;
+  if (skySphere) skySphere.rotation.y += dt * 0.01;
   enforceStructureAnchors();
   updateCamera();
   uiTimer -= dt || 0.016;
