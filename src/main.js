@@ -204,9 +204,9 @@ const TERRAIN_FEATURES = [
 const BUILDING_TYPES = {
   hq: {
     name: "HQ",
-    hp: 1600,
+    hp: 1300,
     radius: 2.9,
-    supply: 14,
+    supply: 18,
     weaponRange: 9,
     weaponDamage: 13,
     cooldown: 1.1,
@@ -223,7 +223,7 @@ const BUILDING_TYPES = {
     hp: 700,
     radius: 2,
     cost: { food: 70, ore: 110 },
-    supply: 6,
+    supply: 12,
   },
   solar: {
     name: "Solar Array",
@@ -454,6 +454,37 @@ window.__afkStrategyDebug = {
     yaw: Number(cameraState.yaw.toFixed(3)),
     pitch: Number(cameraState.pitch.toFixed(3)),
   }),
+  attackProbe: () => {
+    const atk = units.filter((u) => u.alive && u.order?.type === "attack");
+    let withPath = 0;
+    let pending = 0;
+    let near = 0;
+    let minD = 1e9;
+    let sumD = 0;
+    for (const u of atk) {
+      if (u.path) withPath += 1;
+      if (u.pathPending) pending += 1;
+      const obj = u.order.objective;
+      if (obj && obj.alive) {
+        const d = Math.hypot(u.position.x - obj.position.x, u.position.z - obj.position.z);
+        sumD += d;
+        if (d < minD) minD = d;
+        if (d < 18) near += 1;
+      }
+    }
+    return { attackUnits: atk.length, withPath, pending, withinBaseRange: near, minDistToObj: Math.round(minD), avgDistToObj: Math.round(sumD / Math.max(1, atk.length)) };
+  },
+  factions: () => factions.map((f) => ({
+    id: f.id,
+    defeated: f.defeated,
+    units: f.units.filter((u) => u.alive).length,
+    army: f.units.filter((u) => u.alive && u.role === "army").length,
+    attacking: f.units.filter((u) => u.alive && u.order?.type === "attack").length,
+    structures: f.structures.filter((s) => s.alive).length,
+    hq: f.hq?.alive ? Math.round(f.hq.hp) : 0,
+    food: Math.floor(f.resources.food),
+    ore: Math.floor(f.resources.ore),
+  })),
 };
 
 const pointer = {
@@ -755,7 +786,9 @@ const heightField = new Float32Array(HEIGHT_DIM * HEIGHT_DIM); // precomputed te
 
 function waterScore(x, z) {
   const lake = ((x + 4) / 14) ** 2 + ((z + 2) / 10) ** 2;
-  const river = Math.abs(z - Math.sin((x + MAP_SEED) * 0.07) * 10) / 3.4 + Math.abs(x) / 150;
+  let river = Math.abs(z - Math.sin((x + MAP_SEED) * 0.07) * 10) / 3.4 + Math.abs(x) / 150;
+  // Periodic land fords so the river never fully bisects the map — armies can always cross.
+  if (Math.abs(((x + 600) % 32) - 16) < 4) river += 2;
   return Math.min(lake, river);
 }
 
@@ -1862,6 +1895,7 @@ function obstacleAvoidance(unit, direction, targetEntity = null) {
   const aheadZ = unit.position.z + direction.z * (1.4 + unit.speed * 0.28);
   for (const blocker of blockers) {
     if (!blocker.owner.alive || blocker.owner === targetEntity) continue;
+    if (unit.order?.type === "attack" && blocker.owner.faction !== unit.faction) continue; // assaulters phase through the enemy base ring
     const dx = aheadX - blocker.x;
     const dz = aheadZ - blocker.z;
     const minDist = blocker.radius + unit.radius + 0.35;
@@ -1879,6 +1913,7 @@ function obstacleAvoidance(unit, direction, targetEntity = null) {
 function separateFromBlockers(unit, targetEntity = null) {
   for (const blocker of blockers) {
     if (!blocker.owner.alive || blocker.owner === targetEntity) continue;
+    if (unit.order?.type === "attack" && blocker.owner.faction !== unit.faction) continue;
     const dx = unit.position.x - blocker.x;
     const dz = unit.position.z - blocker.z;
     const minDist = blocker.radius + unit.radius + 0.08;
@@ -1955,29 +1990,7 @@ function updateWorker(unit, dt) {
   }
 }
 
-function updateCombatUnit(unit, dt) {
-  if (unit.order.type === "move" && unit.order.point) {
-    const threat = nearestEnemyEntity(unit.position, unit.faction, unit.type === "siege" ? 9 : 5.5);
-    if (threat) unit.order = { type: "attack", target: threat };
-    else {
-      navigateTo(unit, unit.order.point, dt, 0.9);
-      return;
-    }
-  }
-  if (unit.order.type === "attack" && (!unit.order.target || !unit.order.target.alive)) {
-    unit.order.target = nearestEnemyEntity(unit.position, unit.faction, 18) ?? enemyHqTarget(unit.faction);
-  }
-  if (unit.order.type === "guard") {
-    const threat = nearestEnemyEntity(unit.position, unit.faction, 12);
-    if (threat) unit.order = { type: "attack", target: threat };
-    else {
-      const home = unit.faction.rallyPoint ?? unit.faction.hq.position;
-      navigateTo(unit, home, dt, 2.4);
-      return;
-    }
-  }
-  const target = unit.order.target ?? nearestEnemyEntity(unit.position, unit.faction, 12);
-  if (!target) return;
+function fireOrAdvance(unit, target, dt) {
   const stop = unit.range + (target.radius ?? 0.5) + 0.08;
   const distance = navigateTo(unit, target.position, dt, stop, target);
   if (distance <= stop + 0.2) {
@@ -1987,6 +2000,33 @@ function updateCombatUnit(unit, dt) {
       createProjectile(unit, target);
     }
   }
+}
+
+function updateCombatUnit(unit, dt) {
+  // Player move order: head to the point, but shoot anything that wanders into range.
+  if (unit.order.type === "move" && unit.order.point) {
+    const threat = nearestEnemyEntity(unit.position, unit.faction, unit.type === "siege" ? 9 : 5.5);
+    if (threat) fireOrAdvance(unit, threat, dt);
+    else navigateTo(unit, unit.order.point, dt, 0.9);
+    return;
+  }
+  // Guard: hold near home, fight local intruders in place, otherwise return to the rally point.
+  if (unit.order.type === "guard") {
+    const threat = nearestEnemyEntity(unit.position, unit.faction, 13);
+    if (threat) fireOrAdvance(unit, threat, dt);
+    else navigateTo(unit, unit.faction.rallyPoint ?? unit.faction.hq.position, dt, 2.4);
+    return;
+  }
+  // Attack order = assault on an objective base: march straight in (ignoring field skirmishers),
+  // then clear it building-by-building once in range so the strike actually reaches and razes the HQ.
+  if (!unit.order.objective || !unit.order.objective.alive) unit.order.objective = enemyHqTarget(unit.faction);
+  const obj = unit.order.objective;
+  if (!obj) {
+    unit.order = { type: "guard", target: null, point: unit.faction.rallyPoint.clone() };
+    return;
+  }
+  const atBase = unit.position.distanceToSquared(obj.position) < 18 * 18;
+  fireOrAdvance(unit, atBase ? nearestEnemyEntity(unit.position, unit.faction, 18) ?? obj : obj, dt);
 }
 
 function shotMaterial(faction) {
@@ -2108,7 +2148,7 @@ function damageEntity(entity, amount, sourceFaction) {
       entity.faction.defeated = true;
       if (sourceFaction?.hq) {
         for (const unit of entity.faction.units) {
-          if (unit.alive && unit.role === "army") unit.order = { type: "attack", target: sourceFaction.hq };
+          if (unit.alive && unit.role === "army") unit.order = { type: "attack", target: sourceFaction.hq, objective: sourceFaction.hq };
         }
       }
       logEvent(`${entity.faction.shortName} HQ has fallen.`);
@@ -2220,35 +2260,34 @@ function thinkFaction(faction, dt) {
   faction.tech = faction.structures.filter((structure) => structure.alive && structure.type === "academy").length;
 
   if (unitCount(faction, "worker") < directive.workers) requestTrain(faction, "worker");
-  if (structureCount(faction, "refinery") < Math.ceil(directive.workers / 8)) requestBuild(faction, "refinery");
-  if (!hasStructure(faction, "barracks")) requestBuild(faction, "barracks");
-  if (structureCount(faction, "solar") < Math.max(1, directive.tech)) requestBuild(faction, "solar");
+  if (structureCount(faction, "refinery") < Math.ceil(directive.workers / 7)) requestBuild(faction, "refinery");
+  if (structureCount(faction, "solar") < Math.max(1, directive.tech + 1)) requestBuild(faction, "solar");
+  // Build several barracks so the supply cap can actually hold a real army.
+  if (structureCount(faction, "barracks") < clamp(Math.ceil(directive.army / 7), 1, 4)) requestBuild(faction, "barracks");
   if (directive.defense > structureCount(faction, "turret")) requestBuild(faction, "turret");
   if (directive.tech > 1 && !hasStructure(faction, "academy")) requestBuild(faction, "academy");
 
   const army = armyUnits(faction);
   const targetArmy = directive.army;
   if (hasStructure(faction, "barracks") && army.length < targetArmy) {
-    requestTrain(faction, Math.random() < 0.24 ? "scout" : "soldier");
+    // train from every barracks each tick so armies grow to a fighting size
+    for (let i = 0; i < structureCount(faction, "barracks"); i += 1) {
+      requestTrain(faction, Math.random() < 0.24 ? "scout" : "soldier");
+    }
   }
-  if (hasStructure(faction, "academy") && faction.tech > 0 && army.length > 5 && Math.random() < 0.55) {
+  if (hasStructure(faction, "academy") && faction.tech > 0 && army.length > 5 && Math.random() < 0.6) {
     requestTrain(faction, "siege");
   }
 
-  const threat = nearestEnemyEntity(faction.hq.position, faction, 14);
-  if (threat) {
-    for (const unit of army) {
-      if (unit.position.distanceToSquared(faction.hq.position) < 360) unit.order = { type: "attack", target: threat };
-    }
-  }
-
+  // (Local defense is handled per-unit in updateCombatUnit's guard state — no army-wide recall needed.)
   const ready = armyUnits(faction);
-  if (faction.waveTimer <= 0 && ready.length >= Math.max(5, Math.floor(targetArmy * 0.5)) && Math.random() < directive.aggression) {
+  const waveMin = Math.max(6, Math.floor(targetArmy * 0.4));
+  if (faction.waveTimer <= 0 && ready.length >= waveMin && Math.random() < directive.aggression + 0.15) {
     const target = enemyHqTarget(faction);
     if (target) {
-      const count = Math.min(ready.length, Math.max(5, Math.floor(ready.length * 0.72)));
-      for (const unit of ready.slice(0, count)) unit.order = { type: "attack", target };
-      faction.waveTimer = lerp(42, 18, directive.aggression) + rand(0, 14);
+      const count = Math.max(waveMin, Math.floor(ready.length * 0.65)); // commit a strike force, keep a home garrison
+      for (const unit of ready.slice(0, count)) unit.order = { type: "attack", target, objective: target };
+      faction.waveTimer = lerp(34, 14, directive.aggression) + rand(0, 8);
       logEvent(`${faction.shortName} launches a strike at ${target.faction.shortName}.`);
     }
   }
@@ -2354,7 +2393,7 @@ function issueOrder(point, target = null) {
   }
   if (selectedUnits.length === 0) return;
   if (target && target.faction !== playerFaction && target.kind !== "resource") {
-    for (const unit of selectedUnits) unit.order = { type: "attack", target };
+    for (const unit of selectedUnits) unit.order = { type: "attack", target, objective: target };
     showMessage("Attack order issued");
     return;
   }
@@ -2380,7 +2419,7 @@ function orderSelectedAttack() {
   const selectedUnits = game.selected.filter((entity) => entity.kind === "unit" && entity.role === "army" && entity.alive);
   const target = enemyHqTarget(playerFaction) ?? nearestEnemyEntity(playerFaction.hq.position, playerFaction);
   if (!target || selectedUnits.length === 0) return;
-  for (const unit of selectedUnits) unit.order = { type: "attack", target };
+  for (const unit of selectedUnits) unit.order = { type: "attack", target, objective: target };
   showMessage("Selected army attacking");
 }
 
