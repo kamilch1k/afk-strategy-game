@@ -85,20 +85,26 @@ const menuBestTime = document.querySelector("#menuBestTime");
 const menuBestKills = document.querySelector("#menuBestKills");
 const menuWins = document.querySelector("#menuWins");
 
-const MAP_SIZE = 116;
+const MAP_SIZE = 200;
 const HALF_MAP = MAP_SIZE / 2;
 const TERRAIN_TEXTURE_SIZE = 8;
 const TERRAIN_BASE_Y = -1.2;
-const SKY_RADIUS = 440;
+const SKY_RADIUS = 820;
 const SAVE_KEY = "afkDominionRtsStats";
 const MAP_SEED = Math.random() * 10000;
 const MAX_PIXEL_RATIO = 1.15;
 const ISO_YAW = -Math.PI / 4;
 const ISO_PITCH = 0.82;
 const MIN_ZOOM = 34;
-const MAX_ZOOM = 116;
+const MAX_ZOOM = 215;
 const CAMERA_LOOK_HEIGHT = 1.1;
 const VIEW_TANGENT = Math.tan((31 * Math.PI) / 360); // preserve the old 31° vertical view scale across the ortho zoom range
+const SPATIAL_CELL = 8; // uniform grid cell for O(1) nearest-enemy queries
+const NAV_CELL = 2; // coarse A* pathfinding grid cell (world units)
+const NAV_W = Math.floor(MAP_SIZE / NAV_CELL);
+const NAV_H = Math.floor(MAP_SIZE / NAV_CELL);
+const NAV_DIRECT_RANGE = 11; // closer than this, units steer straight; farther, they pathfind
+const PATH_BUDGET = 6; // max A* solves processed per frame (the rest wait in a queue)
 const RESOURCE_LOW_WATER = 85;
 const THINK_INTERVAL = 2.1;
 const UI_INTERVAL = 0.18;
@@ -141,7 +147,7 @@ const FACTION_BLUEPRINTS = [
     id: "verdant",
     name: "Verdant Concord",
     shortName: "Verdant",
-    start: new THREE.Vector3(-38, 0, 34),
+    start: new THREE.Vector3(-66, 0, 58),
     color: 0x78c957,
     accent: 0xf0d46a,
     material: 0x2f5d3f,
@@ -153,7 +159,7 @@ const FACTION_BLUEPRINTS = [
     id: "iron",
     name: "Iron Dominion",
     shortName: "Iron",
-    start: new THREE.Vector3(37, 0, -34),
+    start: new THREE.Vector3(66, 0, -58),
     color: 0xc75449,
     accent: 0xbec7cf,
     material: 0x5a6066,
@@ -164,7 +170,7 @@ const FACTION_BLUEPRINTS = [
     id: "sunspire",
     name: "Sunspire League",
     shortName: "Sunspire",
-    start: new THREE.Vector3(38, 0, 34),
+    start: new THREE.Vector3(66, 0, 58),
     color: 0xe6b64c,
     accent: 0x52b8d8,
     material: 0x9d762f,
@@ -175,7 +181,7 @@ const FACTION_BLUEPRINTS = [
     id: "umbral",
     name: "Umbral Nexus",
     shortName: "Umbral",
-    start: new THREE.Vector3(-38, 0, -34),
+    start: new THREE.Vector3(-66, 0, -58),
     color: 0x8d6ae3,
     accent: 0x59e0c9,
     material: 0x3f345d,
@@ -400,6 +406,39 @@ window.__afkStrategyDebug = {
       ax: Number((structure.anchorX ?? structure.position.x).toFixed(3)),
       az: Number((structure.anchorZ ?? structure.position.z).toFixed(3)),
     })),
+  step: (dt = 0.05, n = 1) => {
+    for (let i = 0; i < n; i += 1) stepSimulation(dt);
+    return window.__afkStrategyDebug.state();
+  },
+  render: () => {
+    enforceStructureAnchors();
+    updateCamera();
+    renderer.render(scene, camera);
+  },
+  look: (x, z, dist) => {
+    cameraState.target.set(x, CAMERA_LOOK_HEIGHT, z);
+    if (dist) cameraState.distance = clamp(dist, MIN_ZOOM, MAX_ZOOM);
+    applyCameraFrustum();
+    updateCamera();
+  },
+  showcase: () => {
+    const f = playerFaction;
+    ["refinery", "barracks", "solar", "turret", "academy"].forEach((t, i) => createStructure(t, f, f.start.x + (i - 2) * 7, f.start.z - 15, true));
+    ["worker", "scout", "soldier", "siege"].forEach((t, i) => spawnUnit(t, f, f.start.x + (i - 1.5) * 3, f.start.z - 7, true));
+    return window.__afkStrategyDebug.state();
+  },
+  state: () => ({
+    time: Number(game.time.toFixed(2)),
+    started: game.started,
+    paused: game.paused,
+    units: units.filter((u) => u.alive).length,
+    withPath: units.filter((u) => u.alive && u.path).length,
+    pathQueue: pathQueue.length,
+    structures: structures.filter((s) => s.alive).length,
+    factionsAlive: factions.filter((f) => !f.defeated).length,
+    playerFood: Math.floor(playerFaction?.resources.food ?? 0),
+    kills: game.stats.kills,
+  }),
 };
 
 const pointer = {
@@ -468,50 +507,41 @@ function createUnitTexture(type, faction) {
   const ctx = canvasTexture.getContext("2d");
   ctx.imageSmoothingEnabled = false;
   ctx.clearRect(0, 0, 32, 32);
-  ctx.fillStyle = "rgba(0,0,0,0.34)";
-  ctx.fillRect(10, 25, 12, 3);
   const body = colorHex(faction.color);
   const accent = colorHex(faction.accent);
-  const dark = "#1b2224";
+  const dark = "#171c1f";
+  const steel = "#cfd4d8";
+  const skin = "#e8c08c";
+  const rect = (x, y, w, h, col) => { ctx.fillStyle = col; ctx.fillRect(x, y, w, h); };
+  rect(9, 27, 14, 3, "rgba(0,0,0,0.30)"); // ground shadow
   if (type === "worker") {
-    ctx.fillStyle = body;
-    ctx.fillRect(12, 12, 8, 12);
-    ctx.fillStyle = accent;
-    ctx.fillRect(14, 8, 5, 5);
-    ctx.fillStyle = "#d2b071";
-    ctx.fillRect(7, 17, 5, 2);
-    ctx.fillRect(20, 15, 4, 2);
-    ctx.fillStyle = dark;
-    ctx.fillRect(13, 24, 2, 3);
-    ctx.fillRect(18, 24, 2, 3);
+    rect(11, 25, 4, 3, dark); rect(17, 25, 4, 3, dark); // legs
+    rect(10, 13, 12, 12, body); // torso
+    rect(10, 13, 12, 2, accent); // belt
+    rect(12, 7, 8, 7, skin); // head
+    rect(11, 6, 10, 3, accent); // hard hat
+    rect(21, 12, 7, 2, "#9b6a39"); rect(26, 9, 2, 6, steel); // pickaxe
   } else if (type === "scout") {
-    ctx.fillStyle = accent;
-    ctx.fillRect(11, 9, 10, 9);
-    ctx.fillStyle = body;
-    ctx.fillRect(9, 17, 14, 8);
-    ctx.fillStyle = dark;
-    ctx.fillRect(7, 14, 3, 10);
-    ctx.fillRect(22, 14, 3, 10);
+    rect(12, 25, 3, 3, dark); rect(17, 25, 3, 3, dark);
+    rect(11, 14, 10, 11, accent); // cloak
+    rect(13, 8, 7, 7, skin); // head
+    rect(12, 7, 9, 3, body); // hood
+    rect(5, 9, 2, 16, "#8a5a2c"); rect(4, 9, 4, 2, "#8a5a2c"); rect(4, 23, 4, 2, "#8a5a2c"); // bow
   } else if (type === "siege") {
-    ctx.fillStyle = body;
-    ctx.fillRect(7, 13, 18, 11);
-    ctx.fillStyle = accent;
-    ctx.fillRect(10, 9, 9, 5);
-    ctx.fillStyle = "#d7d6c8";
-    ctx.fillRect(18, 10, 9, 3);
-    ctx.fillStyle = dark;
-    ctx.fillRect(8, 24, 4, 3);
-    ctx.fillRect(20, 24, 4, 3);
+    rect(7, 24, 5, 4, dark); rect(20, 24, 5, 4, dark); // tracks
+    rect(6, 13, 20, 12, body); // chassis
+    rect(6, 13, 20, 3, accent); // trim
+    rect(9, 9, 11, 6, "#5b6168"); // turret
+    rect(18, 10, 11, 3, steel); // cannon
+    rect(27, 9, 3, 5, dark); // muzzle
   } else {
-    ctx.fillStyle = body;
-    ctx.fillRect(12, 10, 8, 14);
-    ctx.fillStyle = accent;
-    ctx.fillRect(13, 7, 6, 5);
-    ctx.fillStyle = "#d7d6c8";
-    ctx.fillRect(20, 12, 6, 2);
-    ctx.fillStyle = dark;
-    ctx.fillRect(11, 24, 3, 3);
-    ctx.fillRect(18, 24, 3, 3);
+    rect(12, 25, 3, 3, dark); rect(17, 25, 3, 3, dark);
+    rect(8, 13, 4, 10, steel); // shield
+    rect(11, 13, 10, 12, body); // armor
+    rect(11, 13, 10, 2, accent);
+    rect(13, 7, 7, 7, skin); // head
+    rect(12, 6, 9, 3, accent); // helmet
+    rect(22, 4, 2, 20, steel); rect(21, 3, 4, 4, steel); // spear
   }
   const texture = new THREE.CanvasTexture(canvasTexture);
   texture.colorSpace = THREE.SRGBColorSpace;
@@ -627,15 +657,24 @@ function createSkybox() {
 }
 
 function createLighting() {
-  scene.add(new THREE.HemisphereLight(0xbad8ff, 0x2d261b, 1.58));
-  const sun = new THREE.DirectionalLight(0xffe1a8, 2.25);
-  sun.position.set(-28, 56, 26);
+  scene.add(new THREE.HemisphereLight(0xcfe4ff, 0x3a3326, 1.35));
+  const sun = new THREE.DirectionalLight(0xfff0c8, 2.1); // warm key light
+  sun.position.set(-40, 70, 30);
   scene.add(sun);
+  const fill = new THREE.DirectionalLight(0x9fc0ff, 0.7); // cool fill from the opposite side
+  fill.position.set(46, 30, -34);
+  scene.add(fill);
+  const rim = new THREE.DirectionalLight(0xffd9a0, 0.5); // warm rim for edge separation
+  rim.position.set(18, 16, -62);
+  scene.add(rim);
 }
 
+const HEIGHT_DIM = MAP_SIZE + 1;
+const heightField = new Float32Array(HEIGHT_DIM * HEIGHT_DIM); // precomputed terrain height per integer grid node
+
 function waterScore(x, z) {
-  const lake = ((x + 4) / 12) ** 2 + ((z + 2) / 8.5) ** 2;
-  const river = Math.abs(z - Math.sin((x + MAP_SEED) * 0.1) * 6) / 2.6 + Math.abs(x) / 78;
+  const lake = ((x + 4) / 14) ** 2 + ((z + 2) / 10) ** 2;
+  const river = Math.abs(z - Math.sin((x + MAP_SEED) * 0.07) * 10) / 3.4 + Math.abs(x) / 150;
   return Math.min(lake, river);
 }
 
@@ -684,10 +723,24 @@ function terrainTopHeight(x, z) {
   return lerp(terraced, isShore(x, z) ? -0.12 : 0.1, plateauWeight(x, z));
 }
 
+function buildHeightField() {
+  for (let ix = 0; ix <= MAP_SIZE; ix += 1) {
+    for (let iz = 0; iz <= MAP_SIZE; iz += 1) {
+      heightField[ix * HEIGHT_DIM + iz] = terrainTopHeight(ix - HALF_MAP, iz - HALF_MAP);
+    }
+  }
+}
+
+function heightAtGrid(ix, iz) {
+  const cx = clamp(ix + HALF_MAP, 0, MAP_SIZE) | 0;
+  const cz = clamp(iz + HALF_MAP, 0, MAP_SIZE) | 0;
+  return heightField[cx * HEIGHT_DIM + cz];
+}
+
 function terrainKind(x, z) {
   if (isWater(x, z)) return "water";
   if (isShore(x, z)) return "sand";
-  const height = terrainTopHeight(x, z);
+  const height = heightAtGrid(Math.floor(x), Math.floor(z));
   if (height > 2.05) return "rock";
   if (height > 1.05 && mapNoise(Math.floor(x), Math.floor(z), 4) > 0.34) return "dirt";
   if (Math.sin(x * 0.2 + z * 0.17) > 0.72) return "dirt";
@@ -700,10 +753,10 @@ function terrainBuffers() {
 
 function pushTerrainTile(buffers, x, z) {
   const vertexOffset = buffers.positions.length / 3;
-  const h00 = terrainTopHeight(x, z);
-  const h10 = terrainTopHeight(x + 1, z);
-  const h01 = terrainTopHeight(x, z + 1);
-  const h11 = terrainTopHeight(x + 1, z + 1);
+  const h00 = heightAtGrid(x, z);
+  const h10 = heightAtGrid(x + 1, z);
+  const h01 = heightAtGrid(x, z + 1);
+  const h11 = heightAtGrid(x + 1, z + 1);
   buffers.positions.push(x, h00, z, x + 1, h10, z, x, h01, z + 1, x + 1, h11, z + 1);
   buffers.uvs.push(0, 0, 1, 0, 0, 1, 1, 1);
   buffers.indices.push(vertexOffset, vertexOffset + 2, vertexOffset + 1, vertexOffset + 1, vertexOffset + 2, vertexOffset + 3);
@@ -727,6 +780,8 @@ function geometryFromBuffers(buffers) {
 
 function createTerrain() {
   terrainGroup.clear();
+  buildHeightField();
+  buildNavGrid();
   const byKind = new Map();
   for (let x = -HALF_MAP; x < HALF_MAP; x += 1) {
     for (let z = -HALF_MAP; z < HALF_MAP; z += 1) {
@@ -741,27 +796,254 @@ function createTerrain() {
   }
   const skirtBuffers = terrainBuffers();
   for (let i = -HALF_MAP; i < HALF_MAP; i += 1) {
-    pushSkirt(skirtBuffers, i, -HALF_MAP, i + 1, -HALF_MAP, terrainTopHeight(i, -HALF_MAP), terrainTopHeight(i + 1, -HALF_MAP));
-    pushSkirt(skirtBuffers, i + 1, HALF_MAP, i, HALF_MAP, terrainTopHeight(i + 1, HALF_MAP), terrainTopHeight(i, HALF_MAP));
-    pushSkirt(skirtBuffers, -HALF_MAP, i + 1, -HALF_MAP, i, terrainTopHeight(-HALF_MAP, i + 1), terrainTopHeight(-HALF_MAP, i));
-    pushSkirt(skirtBuffers, HALF_MAP, i, HALF_MAP, i + 1, terrainTopHeight(HALF_MAP, i), terrainTopHeight(HALF_MAP, i + 1));
+    pushSkirt(skirtBuffers, i, -HALF_MAP, i + 1, -HALF_MAP, heightAtGrid(i, -HALF_MAP), heightAtGrid(i + 1, -HALF_MAP));
+    pushSkirt(skirtBuffers, i + 1, HALF_MAP, i, HALF_MAP, heightAtGrid(i + 1, HALF_MAP), heightAtGrid(i, HALF_MAP));
+    pushSkirt(skirtBuffers, -HALF_MAP, i + 1, -HALF_MAP, i, heightAtGrid(-HALF_MAP, i + 1), heightAtGrid(-HALF_MAP, i));
+    pushSkirt(skirtBuffers, HALF_MAP, i, HALF_MAP, i + 1, heightAtGrid(HALF_MAP, i), heightAtGrid(HALF_MAP, i + 1));
   }
   terrainGroup.add(new THREE.Mesh(geometryFromBuffers(skirtBuffers), materials.rock));
   createTerrainDetails();
 }
 
 function sampleTerrainHeight(x, z) {
-  const clampedX = clamp(x, -HALF_MAP + 0.001, HALF_MAP - 0.001);
-  const clampedZ = clamp(z, -HALF_MAP + 0.001, HALF_MAP - 0.001);
-  const x0 = Math.floor(clampedX);
-  const z0 = Math.floor(clampedZ);
-  const tx = clampedX - x0;
-  const tz = clampedZ - z0;
-  const h00 = terrainTopHeight(x0, z0);
-  const h10 = terrainTopHeight(x0 + 1, z0);
-  const h01 = terrainTopHeight(x0, z0 + 1);
-  const h11 = terrainTopHeight(x0 + 1, z0 + 1);
+  const gx = clamp(x + HALF_MAP, 0, MAP_SIZE - 0.001);
+  const gz = clamp(z + HALF_MAP, 0, MAP_SIZE - 0.001);
+  const x0 = gx | 0;
+  const z0 = gz | 0;
+  const tx = gx - x0;
+  const tz = gz - z0;
+  const i00 = x0 * HEIGHT_DIM + z0;
+  const h00 = heightField[i00];
+  const h10 = heightField[i00 + HEIGHT_DIM];
+  const h01 = heightField[i00 + 1];
+  const h11 = heightField[i00 + HEIGHT_DIM + 1];
   return lerp(lerp(h00, h10, tx), lerp(h01, h11, tx), tz);
+}
+
+// ---- Unit pathfinding: coarse A* over a static water/passability grid ----
+const navBlocked = new Uint8Array(NAV_W * NAV_H);
+const navG = new Float32Array(NAV_W * NAV_H);
+const navSeen = new Int32Array(NAV_W * NAV_H);
+const navClosed = new Int32Array(NAV_W * NAV_H);
+const navCame = new Int32Array(NAV_W * NAV_H);
+let navGen = 0;
+const heapCap = NAV_W * NAV_H * 8 + 2; // big enough to hold lazy-deletion duplicate pushes
+const heapIdx = new Int32Array(heapCap);
+const heapKey = new Float32Array(heapCap);
+let heapSize = 0;
+const pathQueue = [];
+const pathCache = new Map(); // shared paths: key=coarse start block + goal cell -> { path, expires }
+const tmpWp = new THREE.Vector3();
+const NAV_DIAG = NAV_CELL * Math.SQRT2;
+
+function navIndex(cx, cz) { return cx * NAV_H + cz; }
+function navCenterX(cx) { return (cx + 0.5) * NAV_CELL - HALF_MAP; }
+function navCenterZ(cz) { return (cz + 0.5) * NAV_CELL - HALF_MAP; }
+function worldToNavX(x) { return clamp(Math.floor((x + HALF_MAP) / NAV_CELL), 0, NAV_W - 1); }
+function worldToNavZ(z) { return clamp(Math.floor((z + HALF_MAP) / NAV_CELL), 0, NAV_H - 1); }
+
+function buildNavGrid() {
+  for (let cx = 0; cx < NAV_W; cx += 1) {
+    for (let cz = 0; cz < NAV_H; cz += 1) {
+      navBlocked[navIndex(cx, cz)] = isWater(navCenterX(cx), navCenterZ(cz)) ? 1 : 0;
+    }
+  }
+}
+
+function nearestFreeCell(cx, cz) {
+  if (!navBlocked[navIndex(cx, cz)]) return navIndex(cx, cz);
+  for (let r = 1; r < 14; r += 1) {
+    for (let dx = -r; dx <= r; dx += 1) {
+      for (let dz = -r; dz <= r; dz += 1) {
+        if (Math.abs(dx) !== r && Math.abs(dz) !== r) continue;
+        const nx = cx + dx;
+        const nz = cz + dz;
+        if (nx < 0 || nz < 0 || nx >= NAV_W || nz >= NAV_H) continue;
+        if (!navBlocked[navIndex(nx, nz)]) return navIndex(nx, nz);
+      }
+    }
+  }
+  return -1;
+}
+
+function heapPush(idx, key) {
+  if (heapSize >= heapCap - 1) return; // safety: never overflow the typed-array heap
+  heapSize += 1;
+  let i = heapSize;
+  heapIdx[i] = idx;
+  heapKey[i] = key;
+  while (i > 1) {
+    const p = i >> 1;
+    if (heapKey[p] <= heapKey[i]) break;
+    const tk = heapKey[p]; heapKey[p] = heapKey[i]; heapKey[i] = tk;
+    const ti = heapIdx[p]; heapIdx[p] = heapIdx[i]; heapIdx[i] = ti;
+    i = p;
+  }
+}
+
+function heapPop() {
+  const top = heapIdx[1];
+  heapIdx[1] = heapIdx[heapSize];
+  heapKey[1] = heapKey[heapSize];
+  heapSize -= 1;
+  let i = 1;
+  for (;;) {
+    let s = i;
+    const l = i * 2;
+    const r = l + 1;
+    if (l <= heapSize && heapKey[l] < heapKey[s]) s = l;
+    if (r <= heapSize && heapKey[r] < heapKey[s]) s = r;
+    if (s === i) break;
+    const tk = heapKey[s]; heapKey[s] = heapKey[i]; heapKey[i] = tk;
+    const ti = heapIdx[s]; heapIdx[s] = heapIdx[i]; heapIdx[i] = ti;
+    i = s;
+  }
+  return top;
+}
+
+function findPath(scx, scz, gcx, gcz) {
+  const startI = navBlocked[navIndex(scx, scz)] ? nearestFreeCell(scx, scz) : navIndex(scx, scz);
+  const goalI = navBlocked[navIndex(gcx, gcz)] ? nearestFreeCell(gcx, gcz) : navIndex(gcx, gcz);
+  if (startI < 0 || goalI < 0 || startI === goalI) return null;
+  const gX = (goalI / NAV_H) | 0;
+  const gZ = goalI % NAV_H;
+  navGen += 1;
+  heapSize = 0;
+  navG[startI] = 0;
+  navSeen[startI] = navGen;
+  navCame[startI] = -1;
+  const sX = (startI / NAV_H) | 0;
+  const sZ = startI % NAV_H;
+  heapPush(startI, Math.hypot(gX - sX, gZ - sZ) * NAV_CELL);
+  let expansions = 0;
+  while (heapSize > 0 && expansions < NAV_W * NAV_H) {
+    const cur = heapPop();
+    if (navClosed[cur] === navGen) continue;
+    navClosed[cur] = navGen;
+    if (cur === goalI) break;
+    expansions += 1;
+    const cx = (cur / NAV_H) | 0;
+    const cz = cur % NAV_H;
+    const g = navG[cur];
+    for (let dx = -1; dx <= 1; dx += 1) {
+      for (let dz = -1; dz <= 1; dz += 1) {
+        if (dx === 0 && dz === 0) continue;
+        const nx = cx + dx;
+        const nz = cz + dz;
+        if (nx < 0 || nz < 0 || nx >= NAV_W || nz >= NAV_H) continue;
+        const ni = navIndex(nx, nz);
+        if (navBlocked[ni]) continue;
+        if (dx !== 0 && dz !== 0 && (navBlocked[navIndex(cx + dx, cz)] || navBlocked[navIndex(cx, cz + dz)])) continue;
+        const ng = g + (dx !== 0 && dz !== 0 ? NAV_DIAG : NAV_CELL);
+        if (navSeen[ni] === navGen && ng >= navG[ni]) continue;
+        navG[ni] = ng;
+        navSeen[ni] = navGen;
+        navCame[ni] = cur;
+        heapPush(ni, ng + Math.hypot(gX - nx, gZ - nz) * NAV_CELL);
+      }
+    }
+  }
+  if (navClosed[goalI] !== navGen) return null;
+  const cells = [];
+  for (let c = goalI, guard = 0; c !== -1 && guard < NAV_W * NAV_H; c = navCame[c], guard += 1) cells.push(c);
+  cells.reverse();
+  const path = [];
+  for (let i = 0; i < cells.length; i += 1) {
+    const cx = (cells[i] / NAV_H) | 0;
+    const cz = cells[i] % NAV_H;
+    if (i > 0 && i < cells.length - 1) {
+      const pcx = (cells[i - 1] / NAV_H) | 0;
+      const pcz = cells[i - 1] % NAV_H;
+      const ncx = (cells[i + 1] / NAV_H) | 0;
+      const ncz = cells[i + 1] % NAV_H;
+      if (cx - pcx === ncx - cx && cz - pcz === ncz - cz) continue; // skip collinear waypoints
+    }
+    path.push([navCenterX(cx), navCenterZ(cz)]);
+  }
+  return path.length ? path : null;
+}
+
+function requestPath(unit, gx, gz) {
+  if (unit.pathPending) return;
+  unit.pathPending = true;
+  pathQueue.push({ unit, gx, gz });
+}
+
+function processPathQueue() {
+  if (!pathQueue.length) return;
+  let solves = 0;
+  while (pathQueue.length && solves < PATH_BUDGET) {
+    const req = pathQueue.shift();
+    const u = req.unit;
+    u.pathPending = false;
+    if (!u.alive) continue;
+    const scx = worldToNavX(u.position.x);
+    const scz = worldToNavZ(u.position.z);
+    const gcx = worldToNavX(req.gx);
+    const gcz = worldToNavZ(req.gz);
+    // Share one path among nearby units headed to the same goal (coarse start block + short TTL).
+    const key = `${(scx / 2) | 0}_${(scz / 2) | 0}_${gcx}_${gcz}`;
+    const cached = pathCache.get(key);
+    let path;
+    if (cached && cached.expires > game.time) {
+      path = cached.path;
+    } else {
+      path = findPath(scx, scz, gcx, gcz);
+      if (pathCache.size > 1500) pathCache.clear();
+      pathCache.set(key, { path, expires: game.time + 3 });
+      solves += 1;
+    }
+    u.path = path;
+    u.pathIndex = 0;
+    u.pathGoal = { x: req.gx, z: req.gz };
+    u.repathTimer = 1.4 + Math.random() * 0.8;
+  }
+}
+
+// Steer toward a far target via A* waypoints; fall back to direct steering when close.
+function segmentCrossesWater(ax, az, bx, bz) {
+  const steps = Math.min(16, Math.max(2, Math.ceil(Math.hypot(bx - ax, bz - az) / NAV_CELL)));
+  for (let i = 1; i <= steps; i += 1) {
+    const t = i / steps;
+    if (navBlocked[navIndex(worldToNavX(ax + (bx - ax) * t), worldToNavZ(az + (bz - az) * t))]) return true;
+  }
+  return false;
+}
+
+function navigateTo(unit, target, dt, stopDistance = 0, targetEntity = null) {
+  const dxg = target.x - unit.position.x;
+  const dzg = target.z - unit.position.z;
+  const distToGoal = Math.sqrt(dxg * dxg + dzg * dzg);
+  if (distToGoal <= stopDistance) {
+    unit.path = null;
+    return moveToward(unit, target, dt, stopDistance, targetEntity);
+  }
+  // Steer straight only for short hops that stay on land; otherwise pathfind around water.
+  if (distToGoal < NAV_DIRECT_RANGE && !segmentCrossesWater(unit.position.x, unit.position.z, target.x, target.z)) {
+    unit.path = null;
+    return moveToward(unit, target, dt, stopDistance, targetEntity);
+  }
+  unit.repathTimer -= dt;
+  const goalMoved = !unit.pathGoal || distSq2(unit.pathGoal.x, unit.pathGoal.z, target.x, target.z) > (NAV_CELL * 3) ** 2;
+  if (!unit.pathPending && (!unit.path || unit.repathTimer <= 0 || goalMoved)) requestPath(unit, target.x, target.z);
+  if (unit.path && unit.pathIndex < unit.path.length) {
+    let wp = unit.path[unit.pathIndex];
+    while (wp && distSq2(unit.position.x, unit.position.z, wp[0], wp[1]) < (NAV_CELL * 0.85) ** 2) {
+      unit.pathIndex += 1;
+      wp = unit.path[unit.pathIndex];
+    }
+    if (wp) {
+      tmpWp.set(wp[0], 0, wp[1]);
+      moveToward(unit, tmpWp, dt, 0, targetEntity);
+      return distToGoal;
+    }
+    unit.path = null;
+  }
+  // No usable path (unreachable / not computed yet): steer directly only if it stays on land — never walk onto water.
+  if (!segmentCrossesWater(unit.position.x, unit.position.z, target.x, target.z)) {
+    moveToward(unit, target, dt, stopDistance, targetEntity);
+  }
+  return distToGoal;
 }
 
 function addBlock(group, material, x, y, z, sx, sy, sz) {
@@ -914,46 +1196,77 @@ function createStructureModel(type, faction) {
   const mats = factionMaterials(faction);
   const group = new THREE.Group();
   if (type === "hq") {
-    addBlock(group, mats.stone, 0, 0, 0, 4.2, 1.35, 4.2);
-    addBlock(group, mats.trim, 0, 1.32, 0, 4.45, 0.35, 4.45);
-    addBlock(group, mats.primary, 0, 1.66, 0, 2.9, 1.05, 2.9);
-    addBlock(group, mats.color, 0, 2.68, 0, 2.25, 0.55, 2.25);
+    addBlock(group, mats.stone, 0, 0, 0, 4.4, 1.1, 4.4);
+    addBlock(group, mats.trim, 0, 1.08, 0, 4.7, 0.3, 4.7);
+    addBlock(group, mats.stone, 0, -0.05, 2.45, 1.5, 0.55, 0.9); // entrance steps
+    addBlock(group, mats.primary, 0, 1.36, 0, 2.9, 1.55, 2.9); // keep
+    addBlock(group, mats.dark, 0, 0.72, 1.46, 0.72, 1.05, 0.12); // gate
+    addBlock(group, mats.glass, -0.78, 1.78, 1.47, 0.34, 0.42, 0.08);
+    addBlock(group, mats.glass, 0.78, 1.78, 1.47, 0.34, 0.42, 0.08);
+    addBlock(group, mats.color, 0, 2.95, 0, 2.45, 0.45, 2.45); // eaves
+    addRoofPrism(group, mats.color, 0, 3.18, 0, 2.1, 0.95, 2.1); // pitched roof
+    addBlock(group, mats.accent, 0, 4.0, 0, 0.16, 1.1, 0.16); // flagpole
+    addBlock(group, mats.color, 0.4, 4.5, 0, 0.6, 0.38, 0.05); // banner
     for (const sx of [-1, 1]) {
       for (const sz of [-1, 1]) {
-        addBlock(group, mats.stone, sx * 1.72, 1.45, sz * 1.72, 0.72, 1.75, 0.72);
-        addBlock(group, mats.trim, sx * 1.72, 3.18, sz * 1.72, 0.9, 0.24, 0.9);
+        addBlock(group, mats.stone, sx * 1.85, 1.2, sz * 1.85, 0.9, 3.1, 0.9); // corner towers
+        addBlock(group, mats.trim, sx * 1.85, 2.86, sz * 1.85, 1.1, 0.28, 1.1);
+        addBlock(group, mats.dark, sx * 1.85, 3.12, sz * 1.85, 0.7, 0.3, 0.7);
+        addBlock(group, mats.accent, sx * 1.85, 3.4, sz * 1.85, 0.16, 0.4, 0.16); // finials
       }
     }
-    addBlock(group, mats.accent, 0, 3.26, 0, 1.25, 0.22, 1.25);
   } else if (type === "refinery") {
-    addBlock(group, mats.stone, 0, 0, 0, 2.8, 0.85, 2.15);
-    addBlock(group, mats.primary, -0.45, 0.84, -0.12, 1.45, 0.65, 1.45);
-    addBlock(group, mats.dark, 1.08, 0.62, -0.62, 0.38, 1.45, 0.38);
-    addBlock(group, mats.glass, -0.46, 1.48, -0.12, 0.9, 0.24, 0.9);
-    addBlock(group, mats.accent, 0.82, 0.1, 0.82, 0.82, 0.42, 0.52);
+    addBlock(group, mats.stone, 0, 0, 0, 3.0, 0.7, 2.3);
+    addBlock(group, mats.trim, 0, 0.68, 0, 3.2, 0.18, 2.5);
+    addBlock(group, mats.primary, -0.5, 0.78, -0.1, 1.5, 1.5, 1.5); // tank
+    addBlock(group, mats.trim, -0.5, 1.5, -0.1, 1.66, 0.18, 1.66);
+    addBlock(group, mats.glass, -0.5, 1.72, -0.1, 0.9, 0.22, 0.9);
+    addBlock(group, mats.dark, 1.05, 0.68, -0.6, 0.34, 1.7, 0.34); // chimney
+    addBlock(group, mats.accent, 1.05, 1.6, -0.6, 0.42, 0.2, 0.42);
+    addBlock(group, mats.dark, 1.05, 0.68, 0.4, 0.28, 1.2, 0.28);
+    addBlock(group, mats.trim, 0.3, 0.54, 0.9, 1.4, 0.16, 0.16); // pipe
+    addBlock(group, mats.accent, 0.95, 0.18, 0.95, 0.7, 0.4, 0.5); // vent
   } else if (type === "barracks") {
-    addBlock(group, mats.plaster, 0, 0, 0, 3.35, 1.05, 2.35);
-    addRoofPrism(group, mats.roof, 0, 1.05, 0, 3.75, 0.85, 2.7);
-    addBlock(group, mats.wood, -0.72, 0.12, 1.22, 0.62, 0.68, 0.14);
-    addBlock(group, mats.wood, 0.72, 0.12, 1.22, 0.62, 0.68, 0.14);
-    addBlock(group, mats.color, 0, 1.88, 1.3, 0.18, 0.62, 0.18);
+    addBlock(group, mats.plaster, 0, 0, 0, 3.5, 1.1, 2.4);
+    addBlock(group, mats.wood, 0, 0, 0, 3.7, 0.22, 2.6); // sill
+    addRoofPrism(group, mats.roof, 0, 1.1, 0, 3.9, 0.95, 2.8);
+    addBlock(group, mats.dark, 0, 0.5, 1.24, 1.0, 1.0, 0.1); // doors
+    addBlock(group, mats.wood, 0, 0.5, 1.28, 0.08, 1.0, 0.06);
+    addBlock(group, mats.glass, -1.1, 0.62, 1.22, 0.4, 0.4, 0.08);
+    addBlock(group, mats.glass, 1.1, 0.62, 1.22, 0.4, 0.4, 0.08);
+    addBlock(group, mats.accent, 1.55, 1.0, 1.2, 0.12, 1.3, 0.12); // banner pole
+    addBlock(group, mats.color, 1.42, 1.7, 1.2, 0.32, 0.5, 0.05);
+    addBlock(group, mats.wood, -1.5, 0.3, -0.9, 0.14, 0.7, 0.14); // training post
+    addBlock(group, mats.stone, -1.5, 0.66, -0.9, 0.4, 0.16, 0.4);
   } else if (type === "solar") {
-    addBlock(group, mats.stone, 0, 0, 0, 1.2, 0.45, 1.2);
+    addBlock(group, mats.stone, 0, 0, 0, 1.4, 0.5, 1.4);
+    addBlock(group, mats.dark, 0, 0.48, 0, 0.4, 1.1, 0.4); // pylon
+    addBlock(group, mats.accent, 0, 1.08, 0, 0.6, 0.3, 0.6); // glowing core
     for (let i = -1; i <= 1; i += 2) {
-      const panel = addBlock(group, mats.glass, i * 0.9, 0.52, 0, 1.35, 0.12, 2.15);
-      panel.rotation.z = i * -0.22;
+      const frame = addBlock(group, mats.trim, i * 1.0, 0.64, 0, 1.62, 0.06, 2.4);
+      frame.rotation.z = i * -0.26;
+      const panel = addBlock(group, mats.glass, i * 1.0, 0.7, 0, 1.5, 0.12, 2.3);
+      panel.rotation.z = i * -0.26;
     }
+    addBlock(group, mats.trim, 0, 1.38, 0, 0.12, 0.5, 0.12); // mast
   } else if (type === "turret") {
-    addBlock(group, mats.stone, 0, 0, 0, 1.65, 2.45, 1.65);
-    addBlock(group, mats.trim, 0, 2.42, 0, 1.95, 0.35, 1.95);
-    addCrenels(group, mats.stone, 2.76, 0.62, 0.62, 0.34);
-    const barrel = addBlock(group, mats.dark, 0, 2.46, 1.08, 0.26, 0.26, 1.35);
+    addBlock(group, mats.stone, 0, 0, 0, 1.8, 2.2, 1.8);
+    for (const sx of [-1, 1]) for (const sz of [-1, 1]) addBlock(group, mats.stone, sx * 0.78, 0, sz * 0.78, 0.5, 1.4, 0.5); // buttresses
+    addBlock(group, mats.trim, 0, 2.18, 0, 2.1, 0.3, 2.1);
+    addCrenels(group, mats.stone, 2.5, 0.7, 0.7, 0.34);
+    addBlock(group, mats.primary, 0, 2.5, 0, 1.2, 0.7, 1.2); // turret head
+    const barrel = addBlock(group, mats.dark, 0, 2.78, 1.0, 0.3, 0.3, 1.5);
     barrel.name = "barrel";
+    addBlock(group, mats.accent, 0, 2.78, 1.78, 0.36, 0.36, 0.22); // muzzle
   } else if (type === "academy") {
-    addBlock(group, mats.primary, 0, 0, 0, 2.4, 1.1, 2.4);
-    addBlock(group, mats.glass, 0, 1.08, 0, 1.18, 1.35, 1.18);
-    addRoofPrism(group, mats.accent, 0, 2.38, 0, 1.45, 0.65, 1.45);
-    addBlock(group, mats.trim, 0, 3.02, 0, 0.34, 0.4, 0.34);
+    addBlock(group, mats.primary, 0, 0, 0, 2.6, 1.2, 2.6);
+    addBlock(group, mats.trim, 0, 1.18, 0, 2.8, 0.2, 2.8);
+    for (const sx of [-1, 1]) addBlock(group, mats.primary, sx * 1.0, 1.3, 0, 0.6, 0.9, 2.0); // wings
+    addBlock(group, mats.glass, 0, 1.3, 0, 1.3, 1.5, 1.3); // glowing core
+    addRoofPrism(group, mats.accent, 0, 2.78, 0, 1.6, 0.7, 1.6); // dome
+    addBlock(group, mats.trim, 0, 3.4, 0, 0.16, 0.7, 0.16); // antenna
+    addBlock(group, mats.accent, 0, 4.05, 0, 0.26, 0.26, 0.26); // glowing tip
+    for (const sz of [-1, 1]) addBlock(group, mats.glass, 0, 0.6, sz * 1.31, 1.4, 0.5, 0.06);
   }
   return group;
 }
@@ -1060,6 +1373,7 @@ function createStructure(type, faction, x, z, free = false) {
   faction.structures.push(structure);
   blockers.push({ owner: structure, x, z, radius: definition.radius + 0.4 });
   syncStructureToTerrain(structure);
+  freezeStaticObject(group); // buildings never move — stop per-frame matrix recompute on all their blocks
   updateHealthBar(structure);
   if (!free && faction.player) {
     game.stats.buildingsBuilt += 1;
@@ -1116,28 +1430,40 @@ function createResourceNode(type, x, z, amount = RESOURCE_TYPES[type].amount) {
   return node;
 }
 
+function placeOnLand(x, z) {
+  if (!isWater(x, z)) return [x, z];
+  for (let r = 3; r <= 18; r += 3) {
+    for (let a = 0; a < 8; a += 1) {
+      const nx = x + Math.cos((a / 8) * Math.PI * 2) * r;
+      const nz = z + Math.sin((a / 8) * Math.PI * 2) * r;
+      if (!isWater(nx, nz)) return [nx, nz];
+    }
+  }
+  return [x, z];
+}
+
 function createResourceFields() {
   resourceGroup.clear();
   resourceNodes.length = 0;
   for (const blueprint of FACTION_BLUEPRINTS) {
     const sx = blueprint.start.x;
     const sz = blueprint.start.z;
-    createResourceNode("food", sx + Math.sign(-sx || 1) * 6, sz + 3, 1900);
-    createResourceNode("ore", sx + 3, sz + Math.sign(-sz || 1) * 6, 1600);
-    createResourceNode("power", sx - Math.sign(-sx || 1) * 6, sz - 4, 950);
+    const food = placeOnLand(sx + Math.sign(-sx || 1) * 6, sz + 3);
+    createResourceNode("food", food[0], food[1], 1900);
+    const ore = placeOnLand(sx + 3, sz + Math.sign(-sz || 1) * 6);
+    createResourceNode("ore", ore[0], ore[1], 1600);
+    const power = placeOnLand(sx - Math.sign(-sx || 1) * 6, sz - 4);
+    createResourceNode("power", power[0], power[1], 950);
   }
   const neutralNodes = [
-    ["ore", -8, 28],
-    ["food", 12, 25],
-    ["power", 0, 32],
-    ["ore", -22, -4],
-    ["food", 22, -2],
-    ["power", 0, -28],
-    ["ore", 28, 10],
-    ["food", -28, -12],
+    ["power", 0, 44], ["ore", 44, 6], ["food", 4, -44], ["ore", -44, -4],
+    ["food", 34, 34], ["power", -34, 32], ["ore", 36, -32], ["food", -34, -34],
+    ["food", 0, 78], ["power", 78, 0], ["ore", 0, -78], ["power", -78, 0],
+    ["ore", 54, 20], ["food", -54, -20], ["power", 22, -58], ["food", -22, 58],
   ];
   for (const [type, x, z] of neutralNodes) {
-    createResourceNode(type, x + rand(-3, 3), z + rand(-3, 3), RESOURCE_TYPES[type].amount * 1.25);
+    const [lx, lz] = placeOnLand(x + rand(-3, 3), z + rand(-3, 3));
+    createResourceNode(type, lx, lz, RESOURCE_TYPES[type].amount * 1.25);
   }
 }
 
@@ -1163,6 +1489,8 @@ function resetWorld() {
   structures.length = 0;
   blockers.length = 0;
   projectiles.length = 0;
+  pathQueue.length = 0;
+  pathCache.clear();
   game.selected = [];
   game.time = 0;
   game.winner = null;
@@ -1289,6 +1617,11 @@ function spawnUnit(type, faction, x, z, free = false) {
     cargo: 0,
     harvestTimer: 0,
     frameSeed: Math.random() * 100,
+    path: null,
+    pathIndex: 0,
+    pathGoal: null,
+    pathPending: false,
+    repathTimer: 0,
     sprite,
     shadow,
     selectRing,
@@ -1349,20 +1682,55 @@ function preferredGatherType(faction) {
   return "power";
 }
 
+const spatialGrid = new Map(); // SPATIAL_CELL-sized buckets of live units, rebuilt each frame
+function spatialKey(cx, cz) { return cx * 100003 + cz; }
+function rebuildSpatial() {
+  for (const bucket of spatialGrid.values()) bucket.length = 0; // reuse arrays, avoid per-frame GC
+  for (const unit of units) {
+    if (!unit.alive) continue;
+    const key = spatialKey(Math.floor(unit.position.x / SPATIAL_CELL), Math.floor(unit.position.z / SPATIAL_CELL));
+    let bucket = spatialGrid.get(key);
+    if (!bucket) spatialGrid.set(key, (bucket = []));
+    bucket.push(unit);
+  }
+}
+
 function nearestEnemyEntity(from, faction, maxDistance = Infinity) {
   let best = null;
   let bestScore = maxDistance * maxDistance;
-  for (const unit of units) {
-    if (!unit.alive || unit.faction === faction) continue;
-    const score = from.distanceToSquared(unit.position);
-    if (score < bestScore) {
-      bestScore = score;
-      best = unit;
+  if (Number.isFinite(maxDistance)) {
+    const reach = Math.ceil(maxDistance / SPATIAL_CELL);
+    const ccx = Math.floor(from.x / SPATIAL_CELL);
+    const ccz = Math.floor(from.z / SPATIAL_CELL);
+    for (let dx = -reach; dx <= reach; dx += 1) {
+      for (let dz = -reach; dz <= reach; dz += 1) {
+        const bucket = spatialGrid.get(spatialKey(ccx + dx, ccz + dz));
+        if (!bucket) continue;
+        for (const unit of bucket) {
+          if (unit.faction === faction) continue;
+          const score = from.distanceToSquared(unit.position);
+          if (score < bestScore) {
+            bestScore = score;
+            best = unit;
+          }
+        }
+      }
+    }
+  } else {
+    for (const unit of units) {
+      if (!unit.alive || unit.faction === faction) continue;
+      const score = from.distanceToSquared(unit.position);
+      if (score < bestScore) {
+        bestScore = score;
+        best = unit;
+      }
     }
   }
   for (const structure of structures) {
     if (!structure.alive || structure.faction === faction) continue;
-    const score = from.distanceToSquared(structure.position) - (structure.type === "hq" ? 20 : 0);
+    const raw = from.distanceToSquared(structure.position);
+    if (raw >= bestScore) continue; // respect maxDistance before applying the HQ priority bias
+    const score = raw - (structure.type === "hq" ? 20 : 0);
     if (score < bestScore) {
       bestScore = score;
       best = structure;
@@ -1441,16 +1809,25 @@ function separateFromBlockers(unit, targetEntity = null) {
 }
 
 function separateUnits(unit) {
-  for (const other of units) {
-    if (other === unit || !other.alive) continue;
-    const dx = unit.position.x - other.position.x;
-    const dz = unit.position.z - other.position.z;
-    const minDist = unit.radius + other.radius + 0.08;
-    const d = Math.hypot(dx, dz);
-    if (d <= 0.0001 || d >= minDist) continue;
-    const push = (minDist - d) * 0.28;
-    unit.position.x += (dx / d) * push;
-    unit.position.z += (dz / d) * push;
+  // only test units in the 3x3 spatial cells around this one (cell size >> separation radius)
+  const ccx = Math.floor(unit.position.x / SPATIAL_CELL);
+  const ccz = Math.floor(unit.position.z / SPATIAL_CELL);
+  for (let dcx = -1; dcx <= 1; dcx += 1) {
+    for (let dcz = -1; dcz <= 1; dcz += 1) {
+      const bucket = spatialGrid.get(spatialKey(ccx + dcx, ccz + dcz));
+      if (!bucket) continue;
+      for (const other of bucket) {
+        if (other === unit) continue;
+        const dx = unit.position.x - other.position.x;
+        const dz = unit.position.z - other.position.z;
+        const minDist = unit.radius + other.radius + 0.08;
+        const d = Math.hypot(dx, dz);
+        if (d <= 0.0001 || d >= minDist) continue;
+        const push = (minDist - d) * 0.28;
+        unit.position.x += (dx / d) * push;
+        unit.position.z += (dz / d) * push;
+      }
+    }
   }
 }
 
@@ -1464,7 +1841,7 @@ function updateWorker(unit, dt) {
   if (unit.cargo > 0) {
     const dropoff = nearestDropoff(unit);
     if (!dropoff) { unit.cargo = 0; unit.cargoType = null; unit.order.target = null; return; } // no dropoff left: dump cargo, don't freeze
-    const distance = moveToward(unit, dropoff.position, dt, dropoff.radius + 0.8, dropoff);
+    const distance = navigateTo(unit, dropoff.position, dt, dropoff.radius + 0.8, dropoff);
     if (distance <= dropoff.radius + 1) {
       unit.faction.resources[unit.cargoType] += unit.cargo;
       unit.cargo = 0;
@@ -1478,7 +1855,7 @@ function updateWorker(unit, dt) {
   }
   const node = unit.order.target;
   if (!node) return;
-  const distance = moveToward(unit, node.position, dt, node.radius + 0.35, node);
+  const distance = navigateTo(unit, node.position, dt, node.radius + 0.35, node);
   if (distance <= node.radius + 0.45) {
     unit.harvestTimer -= dt;
     if (unit.harvestTimer <= 0) {
@@ -1502,7 +1879,7 @@ function updateCombatUnit(unit, dt) {
     const threat = nearestEnemyEntity(unit.position, unit.faction, unit.type === "siege" ? 9 : 5.5);
     if (threat) unit.order = { type: "attack", target: threat };
     else {
-      moveToward(unit, unit.order.point, dt, 0.9);
+      navigateTo(unit, unit.order.point, dt, 0.9);
       return;
     }
   }
@@ -1514,14 +1891,14 @@ function updateCombatUnit(unit, dt) {
     if (threat) unit.order = { type: "attack", target: threat };
     else {
       const home = unit.faction.rallyPoint ?? unit.faction.hq.position;
-      moveToward(unit, home, dt, 2.4);
+      navigateTo(unit, home, dt, 2.4);
       return;
     }
   }
   const target = unit.order.target ?? nearestEnemyEntity(unit.position, unit.faction, 12);
   if (!target) return;
   const stop = unit.range + (target.radius ?? 0.5) + 0.08;
-  const distance = moveToward(unit, target.position, dt, stop, target);
+  const distance = navigateTo(unit, target.position, dt, stop, target);
   if (distance <= stop + 0.2) {
     unit.attackTimer -= dt;
     if (unit.attackTimer <= 0) {
@@ -1567,10 +1944,18 @@ function updateProjectiles(dt) {
       projectile.alive = false;
       damageEntity(projectile.target, projectile.damage, projectile.faction);
       if (projectile.splash > 0) {
-        for (const unit of units) {
-          if (!unit.alive || unit.faction === projectile.faction || unit === projectile.target) continue;
-          if (unit.position.distanceToSquared(projectile.target.position) < projectile.splash * projectile.splash) {
-            damageEntity(unit, projectile.damage * 0.36, projectile.faction);
+        const tp = projectile.target.position;
+        const ccx = Math.floor(tp.x / SPATIAL_CELL);
+        const ccz = Math.floor(tp.z / SPATIAL_CELL);
+        const splashSq = projectile.splash * projectile.splash;
+        for (let dcx = -1; dcx <= 1; dcx += 1) {
+          for (let dcz = -1; dcz <= 1; dcz += 1) {
+            const bucket = spatialGrid.get(spatialKey(ccx + dcx, ccz + dcz));
+            if (!bucket) continue;
+            for (const unit of bucket) {
+              if (!unit.alive || unit.faction === projectile.faction || unit === projectile.target) continue;
+              if (unit.position.distanceToSquared(tp) < splashSq) damageEntity(unit, projectile.damage * 0.36, projectile.faction);
+            }
           }
         }
       }
@@ -1585,13 +1970,26 @@ function updateProjectiles(dt) {
   }
 }
 
+const hitMaterials = new Map(); // cached per color — hit cubes fade via scale, not opacity, so sharing is safe
+function hitMaterial(color) {
+  let material = hitMaterials.get(color);
+  if (!material) {
+    material = new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.85 });
+    hitMaterials.set(color, material);
+  }
+  return material;
+}
+
 function createHit(position, color) {
-  const material = new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.8 });
+  const material = hitMaterial(color);
+  const baseY = sampleTerrainHeight(position.x, position.z);
   for (let i = 0; i < 4; i += 1) {
     const mesh = new THREE.Mesh(cubeGeometry, material);
-    mesh.position.set(position.x + rand(-0.25, 0.25), sampleTerrainHeight(position.x, position.z) + rand(0.5, 1.2), position.z + rand(-0.25, 0.25));
-    mesh.scale.setScalar(rand(0.08, 0.18));
+    mesh.position.set(position.x + rand(-0.25, 0.25), baseY + rand(0.5, 1.2), position.z + rand(-0.25, 0.25));
+    const s = rand(0.08, 0.18);
+    mesh.scale.setScalar(s);
     mesh.userData.life = rand(0.28, 0.5);
+    mesh.userData.baseScale = s;
     mesh.userData.velocity = new THREE.Vector3(rand(-1, 1), rand(1, 2), rand(-1, 1));
     effectGroup.add(mesh);
   }
@@ -1602,7 +2000,7 @@ function updateEffects(dt) {
     if (!child.userData.life) continue;
     child.userData.life -= dt;
     child.position.addScaledVector(child.userData.velocity, dt);
-    child.material.opacity = clamp(child.userData.life * 2, 0, 1);
+    child.scale.setScalar(child.userData.baseScale * clamp(child.userData.life * 2, 0, 1));
     if (child.userData.life <= 0) effectGroup.remove(child);
   }
 }
@@ -1637,8 +2035,10 @@ function damageEntity(entity, amount, sourceFaction) {
     if (sourceFaction?.player && entity.faction !== sourceFaction) game.stats.kills += 3;
   }
   createHit(entity.position, sourceFaction?.accent ?? 0xffffff);
-  game.selected = game.selected.filter((item) => item !== entity);
-  updateSelectionVisuals();
+  if (game.selected.length && game.selected.includes(entity)) {
+    removeFrom(game.selected, entity);
+    updateSelectionVisuals(); // only sweep the scene when a *selected* entity dies
+  }
 }
 
 function updateUnits(dt) {
@@ -2049,7 +2449,7 @@ function zoomCamera(factor) {
 function resetCamera() {
   cameraState.target.copy(playerFaction?.hq?.position ?? new THREE.Vector3(0, 0, 0));
   cameraState.target.y = CAMERA_LOOK_HEIGHT;
-  cameraState.distance = 82;
+  cameraState.distance = 135;
   applyCameraFrustum();
   updateCamera();
 }
@@ -2291,21 +2691,25 @@ function bindEvents() {
   defendOrderButton.addEventListener("click", orderSelectedDefend);
 }
 
+function stepSimulation(dt) {
+  game.time += dt;
+  updateKeyboardCamera(dt);
+  rebuildSpatial();
+  processPathQueue();
+  updateFactions(dt);
+  updateStructures(dt);
+  updateUnits(dt);
+  updateProjectiles(dt);
+  updateEffects(dt);
+  checkWinner();
+  updateMessage();
+}
+
 function animate() {
   requestAnimationFrame(animate);
   let dt = Math.min(clock.getDelta(), 0.05);
   if (!game.started || game.paused) dt = 0;
-  if (dt > 0) {
-    game.time += dt;
-    updateKeyboardCamera(dt);
-    updateFactions(dt);
-    updateStructures(dt);
-    updateUnits(dt);
-    updateProjectiles(dt);
-    updateEffects(dt);
-    checkWinner();
-    updateMessage();
-  }
+  if (dt > 0) stepSimulation(dt);
   if (skySphere) skySphere.rotation.y += dt * 0.01;
   enforceStructureAnchors();
   updateCamera();

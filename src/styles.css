@@ -454,23 +454,29 @@ body.menu-open #world {
 
 .battle-message {
   position: fixed;
-  top: 50%;
+  bottom: 104px;
   left: 50%;
   z-index: 7;
   display: none;
-  width: min(420px, calc(100vw - 40px));
-  padding: 16px 18px;
-  border-radius: 8px;
+  max-width: min(440px, calc(100vw - 40px));
+  padding: 7px 16px;
+  border-radius: 999px;
   color: #fff6d9;
-  font-size: clamp(1.15rem, 3vw, 1.75rem);
-  font-weight: 950;
+  font-size: 0.82rem;
+  font-weight: 800;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
   text-align: center;
-  transform: translate(-50%, -50%);
+  transform: translateX(-50%) translateY(6px);
+  opacity: 0;
+  transition: opacity 180ms ease, transform 180ms ease;
   pointer-events: none;
 }
 
 .battle-message.show {
   display: block;
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
 }
 
 .menu-screen {
@@ -632,4 +638,137 @@ body.menu-open #world {
   .stat-grid.live {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
+}
+
+/* ---- Visual refresh: cohesive strategy-green palette, gradients, glows ---- */
+:root {
+  --accent: #bfe98a;
+  --accent-2: #f0d77e;
+}
+
+body {
+  background:
+    radial-gradient(120% 80% at 50% -10%, rgba(120, 201, 87, 0.1), transparent 60%),
+    #06100f;
+}
+
+.top-hud,
+.left-panel,
+.right-panel,
+.camera-tools,
+.command-bar {
+  border: 1px solid rgba(190, 230, 150, 0.14);
+  background: linear-gradient(180deg, rgba(20, 30, 28, 0.92), rgba(10, 16, 16, 0.88));
+  box-shadow:
+    0 18px 44px rgba(0, 0, 0, 0.45),
+    inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  backdrop-filter: blur(12px) saturate(1.1);
+}
+
+.panel-section,
+.status-card,
+.resource-strip,
+.stat-grid div,
+.civ-row,
+.event-log li {
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.05), rgba(255, 255, 255, 0.02));
+}
+
+.section-heading strong {
+  color: var(--accent-2);
+  letter-spacing: 0.02em;
+}
+
+#foodReadout {
+  color: #aee37a;
+}
+
+#oreReadout {
+  color: #cfd6dd;
+}
+
+#powerReadout {
+  color: #7fd6f0;
+}
+
+.meter span {
+  background: linear-gradient(90deg, #d65b4d, #f0d77e, #aee37a);
+}
+
+.icon-button {
+  border: 1px solid rgba(190, 230, 150, 0.18);
+  background: linear-gradient(180deg, #2b3b41, #1d2a2f);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06);
+}
+
+.icon-button:hover {
+  background: linear-gradient(180deg, #36505a, #243740);
+}
+
+.segmented-controls button,
+.command-bar button,
+.menu-button {
+  border: 1px solid rgba(190, 230, 150, 0.2);
+  background: linear-gradient(180deg, #2a3a3f, #1c282c);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  letter-spacing: 0.01em;
+  transition:
+    filter 120ms ease,
+    transform 80ms ease,
+    border-color 120ms ease;
+}
+
+.command-bar button {
+  border-radius: 8px;
+}
+
+.segmented-controls button:hover,
+.command-bar button:not(:disabled):hover,
+.menu-button:hover {
+  border-color: rgba(190, 230, 150, 0.42);
+  filter: brightness(1.14);
+}
+
+.segmented-controls button:active,
+.command-bar button:active {
+  transform: translateY(1px);
+}
+
+.segmented-controls button.active {
+  border-color: rgba(190, 230, 150, 0.7);
+  background: linear-gradient(180deg, #5b8a3e, #3c5a2a);
+  box-shadow:
+    0 0 0 1px rgba(190, 230, 150, 0.3),
+    0 0 18px rgba(120, 201, 87, 0.25);
+  color: #fff;
+}
+
+.menu-button.primary {
+  border-color: rgba(190, 230, 150, 0.6);
+  background: linear-gradient(180deg, #6fa343, #4d722f);
+  box-shadow: 0 8px 22px rgba(80, 123, 54, 0.4);
+}
+
+.menu-button.danger {
+  background: linear-gradient(180deg, #8a3f3c, #5e2a28);
+}
+
+.menu-panel {
+  border: 1px solid rgba(190, 230, 150, 0.18);
+  background: linear-gradient(180deg, rgba(16, 24, 22, 0.95), rgba(9, 14, 14, 0.92));
+}
+
+.menu-panel h1 {
+  text-shadow: 0 2px 18px rgba(120, 201, 87, 0.25);
+}
+
+.event-log li {
+  border-left: 2px solid rgba(190, 230, 150, 0.3);
+}
+
+.battle-message {
+  border: 1px solid rgba(190, 230, 150, 0.25);
+  background: linear-gradient(180deg, rgba(20, 30, 28, 0.95), rgba(10, 16, 16, 0.92));
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
 }
