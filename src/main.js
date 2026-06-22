@@ -425,9 +425,12 @@ window.__afkStrategyDebug = {
     updateCamera();
     renderer.render(scene, camera);
   },
-  look: (x, z, dist) => {
+  look: (x, z, dist, yaw, pitch) => {
     cameraState.target.set(x, CAMERA_LOOK_HEIGHT, z);
     if (dist) cameraState.distance = clamp(dist, MIN_ZOOM, MAX_ZOOM);
+    if (yaw !== undefined) cameraState.yaw = yaw;
+    if (pitch !== undefined) cameraState.pitch = clamp(pitch, MIN_PITCH, MAX_PITCH);
+    recomputeCameraBasis();
     applyCameraFrustum();
     updateCamera();
   },
@@ -613,38 +616,117 @@ function initMaterials() {
 
 function createSkyTexture() {
   const c = document.createElement("canvas");
-  c.width = 512;
-  c.height = 256;
+  c.width = 2048;
+  c.height = 1024;
+  const w = c.width;
+  const h = c.height;
   const ctx = c.getContext("2d");
-  const gradient = ctx.createLinearGradient(0, 0, 0, c.height);
-  gradient.addColorStop(0, "#0b1328");
-  gradient.addColorStop(0.45, "#152f45");
-  gradient.addColorStop(1, "#5e7d86");
-  ctx.fillStyle = gradient;
-  ctx.fillRect(0, 0, c.width, c.height);
-  for (let i = 0; i < 520; i += 1) {
-    const x = Math.random() * c.width;
-    const y = Math.random() * c.height * 0.58;
-    const size = Math.random() < 0.86 ? 1 : 2;
-    ctx.fillStyle = Math.random() < 0.72 ? "#e8f4ff" : "#ffd889";
-    ctx.globalAlpha = rand(0.28, 0.95);
-    ctx.fillRect(Math.floor(x), Math.floor(y), size, size);
-  }
-  ctx.globalAlpha = 0.22;
-  for (let i = 0; i < 14; i += 1) {
-    ctx.fillStyle = i % 2 ? "#8f6bea" : "#5ae2cf";
-    ctx.beginPath();
-    ctx.ellipse(rand(40, 470), rand(26, 150), rand(28, 80), rand(5, 15), rand(-0.8, 0.8), 0, Math.PI * 2);
-    ctx.fill();
+
+  // Vertical gradient: indigo zenith -> violet -> teal -> warm dusk horizon
+  const sky = ctx.createLinearGradient(0, 0, 0, h);
+  sky.addColorStop(0.0, "#070a1e");
+  sky.addColorStop(0.32, "#141b3e");
+  sky.addColorStop(0.58, "#26405c");
+  sky.addColorStop(0.82, "#9d6a59");
+  sky.addColorStop(1.0, "#e8b06a");
+  ctx.fillStyle = sky;
+  ctx.fillRect(0, 0, w, h);
+
+  // Soft nebula clouds (faction-tinted)
+  const cloud = (cx, cy, r, rgb, a) => {
+    const g = ctx.createRadialGradient(cx, cy, 0, cx, cy, r);
+    g.addColorStop(0, `rgba(${rgb},${a})`);
+    g.addColorStop(1, `rgba(${rgb},0)`);
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, w, h);
+  };
+  cloud(w * 0.24, h * 0.22, 640, "143,107,234", 0.18); // violet
+  cloud(w * 0.68, h * 0.16, 560, "90,226,207", 0.13); // teal
+  cloud(w * 0.5, h * 0.34, 760, "214,109,120", 0.08); // rose
+  cloud(w * 0.86, h * 0.3, 500, "120,150,234", 0.1); // blue
+
+  // Faint galaxy band
+  ctx.save();
+  ctx.translate(w * 0.55, h * 0.28);
+  ctx.rotate(-0.34);
+  const band = ctx.createLinearGradient(0, -130, 0, 130);
+  band.addColorStop(0, "rgba(186,196,255,0)");
+  band.addColorStop(0.5, "rgba(196,206,255,0.1)");
+  band.addColorStop(1, "rgba(186,196,255,0)");
+  ctx.fillStyle = band;
+  ctx.fillRect(-w, -130, w * 2, 260);
+  for (let i = 0; i < 700; i += 1) {
+    ctx.globalAlpha = rand(0.2, 0.8);
+    ctx.fillStyle = Math.random() < 0.5 ? "#cfe0ff" : "#ffffff";
+    ctx.fillRect(rand(-w, w), (Math.random() - 0.5) * 210, 1, 1);
   }
   ctx.globalAlpha = 1;
+  ctx.restore();
+
+  // Star field — denser/brighter high up, thinning toward the horizon
+  for (let i = 0; i < 1400; i += 1) {
+    const x = Math.random() * w;
+    const y = Math.random() * h * 0.72;
+    const fade = 1 - y / (h * 0.72);
+    if (Math.random() > 0.4 + fade * 0.5) continue;
+    const size = Math.random() < 0.9 ? 1 : 2;
+    ctx.globalAlpha = rand(0.25, 1) * (0.4 + fade * 0.6);
+    ctx.fillStyle = Math.random() < 0.78 ? "#eaf2ff" : Math.random() < 0.5 ? "#ffd9a0" : "#bcd0ff";
+    ctx.fillRect(Math.floor(x), Math.floor(y), size, size);
+  }
+  ctx.globalAlpha = 1;
+
+  // Bright twinkle stars with halo + lens cross
+  for (let i = 0; i < 18; i += 1) {
+    const x = Math.random() * w;
+    const y = Math.random() * h * 0.55;
+    const r = rand(2.5, 5);
+    const halo = ctx.createRadialGradient(x, y, 0, x, y, r * 6);
+    halo.addColorStop(0, "rgba(255,255,255,0.9)");
+    halo.addColorStop(0.3, "rgba(200,220,255,0.35)");
+    halo.addColorStop(1, "rgba(200,220,255,0)");
+    ctx.fillStyle = halo;
+    ctx.fillRect(x - r * 6, y - r * 6, r * 12, r * 12);
+    ctx.strokeStyle = "rgba(255,255,255,0.5)";
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(x - r * 4, y);
+    ctx.lineTo(x + r * 4, y);
+    ctx.moveTo(x, y - r * 4);
+    ctx.lineTo(x, y + r * 4);
+    ctx.stroke();
+    ctx.fillStyle = "#ffffff";
+    ctx.beginPath();
+    ctx.arc(x, y, r * 0.6, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  // Sun glow low on the horizon
+  const sx = w * 0.2;
+  const sy = h * 0.66;
+  const sun = ctx.createRadialGradient(sx, sy, 0, sx, sy, 380);
+  sun.addColorStop(0, "rgba(255,238,186,0.95)");
+  sun.addColorStop(0.18, "rgba(255,206,120,0.6)");
+  sun.addColorStop(0.5, "rgba(255,170,90,0.18)");
+  sun.addColorStop(1, "rgba(255,170,90,0)");
+  ctx.fillStyle = sun;
+  ctx.fillRect(0, 0, w, h);
+
+  // Warm horizon haze
+  const haze = ctx.createLinearGradient(0, h * 0.78, 0, h);
+  haze.addColorStop(0, "rgba(255,200,140,0)");
+  haze.addColorStop(1, "rgba(255,190,120,0.35)");
+  ctx.fillStyle = haze;
+  ctx.fillRect(0, h * 0.78, w, h * 0.22);
+
   const texture = new THREE.CanvasTexture(c);
   texture.colorSpace = THREE.SRGBColorSpace;
+  texture.anisotropy = 4;
   return texture;
 }
 
 function createSkybox() {
-  const geometry = new THREE.SphereGeometry(SKY_RADIUS, 32, 16);
+  const geometry = new THREE.SphereGeometry(SKY_RADIUS, 64, 32);
   const material = new THREE.MeshBasicMaterial({
     map: createSkyTexture(),
     side: THREE.BackSide,
@@ -653,19 +735,6 @@ function createSkybox() {
   skySphere = new THREE.Mesh(geometry, material);
   skySphere.position.y = -90;
   skyGroup.add(skySphere);
-
-  const glowGeometry = new THREE.CircleGeometry(55, 32);
-  const glowMaterial = new THREE.MeshBasicMaterial({
-    color: 0xffd880,
-    transparent: true,
-    opacity: 0.22,
-    depthWrite: false,
-    side: THREE.DoubleSide,
-  });
-  const glow = new THREE.Mesh(glowGeometry, glowMaterial);
-  glow.position.set(-165, 135, -190);
-  glow.lookAt(0, 0, 0);
-  skyGroup.add(glow);
 }
 
 function createLighting() {
