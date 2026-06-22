@@ -370,6 +370,23 @@ const game = {
   },
 };
 
+window.__afkStrategyDebug = {
+  getStructureSnapshot: () => structures
+    .filter((structure) => structure.alive)
+    .map((structure) => ({
+      id: structure.id,
+      type: structure.type,
+      x: Number(structure.position.x.toFixed(3)),
+      y: Number(structure.position.y.toFixed(3)),
+      z: Number(structure.position.z.toFixed(3)),
+      gx: Number(structure.group.position.x.toFixed(3)),
+      gy: Number(structure.group.position.y.toFixed(3)),
+      gz: Number(structure.group.position.z.toFixed(3)),
+      ax: Number((structure.anchorX ?? structure.position.x).toFixed(3)),
+      az: Number((structure.anchorZ ?? structure.position.z).toFixed(3)),
+    })),
+};
+
 const pointer = {
   active: false,
   id: null,
@@ -882,40 +899,46 @@ function createStructureModel(type, faction) {
   const mats = factionMaterials(faction);
   const group = new THREE.Group();
   if (type === "hq") {
-    addBlock(group, mats.stone, 0, 0, 0, 4.7, 2.35, 4.2);
-    addBlock(group, mats.trim, 0, 2.28, 0, 3.65, 0.7, 3.1);
+    addBlock(group, mats.stone, 0, 0, 0, 4.2, 1.35, 4.2);
+    addBlock(group, mats.trim, 0, 1.32, 0, 4.45, 0.35, 4.45);
+    addBlock(group, mats.primary, 0, 1.66, 0, 2.9, 1.05, 2.9);
+    addBlock(group, mats.color, 0, 2.68, 0, 2.25, 0.55, 2.25);
     for (const sx of [-1, 1]) {
-      for (const sz of [-1, 1]) addBlock(group, mats.stone, sx * 2.15, 0.04, sz * 1.78, 1.05, 3.2, 1.05);
+      for (const sz of [-1, 1]) {
+        addBlock(group, mats.stone, sx * 1.72, 1.45, sz * 1.72, 0.72, 1.75, 0.72);
+        addBlock(group, mats.trim, sx * 1.72, 3.18, sz * 1.72, 0.9, 0.24, 0.9);
+      }
     }
-    addBlock(group, mats.color, 0, 3.05, 0, 4.35, 0.34, 0.5);
-    addBlock(group, mats.accent, 0, 3.42, 0, 3.35, 0.22, 0.28);
-    addWallSegment(group, mats, 0, 3.95, 7.2, 0.55);
-    addWallSegment(group, mats, -3.85, 0.35, 0.55, 7.2);
-    addWallSegment(group, mats, 3.85, 0.35, 0.55, 7.2);
+    addBlock(group, mats.accent, 0, 3.26, 0, 1.25, 0.22, 1.25);
   } else if (type === "refinery") {
-    addBlock(group, mats.stone, 0, 0, 0, 2.7, 0.9, 2.2);
-    addRoofPrism(group, mats.roof, -0.25, 0.86, -0.05, 2.45, 0.7, 2.35);
-    addBlock(group, mats.dark, 1.18, 0.84, -0.72, 0.34, 1.55, 0.34);
-    addBlock(group, mats.glass, -0.76, 0.88, 0.35, 0.72, 0.75, 0.72);
-    addBlock(group, mats.accent, 0.86, 0.12, 1.1, 0.64, 0.48, 0.34);
+    addBlock(group, mats.stone, 0, 0, 0, 2.8, 0.85, 2.15);
+    addBlock(group, mats.primary, -0.45, 0.84, -0.12, 1.45, 0.65, 1.45);
+    addBlock(group, mats.dark, 1.08, 0.62, -0.62, 0.38, 1.45, 0.38);
+    addBlock(group, mats.glass, -0.46, 1.48, -0.12, 0.9, 0.24, 0.9);
+    addBlock(group, mats.accent, 0.82, 0.1, 0.82, 0.82, 0.42, 0.52);
   } else if (type === "barracks") {
-    addVillageHouse(group, mats, mats.roof);
-    addBlock(group, mats.wood, -1.7, 0.05, 0.1, 0.55, 1.15, 1.65);
-    addBlock(group, mats.wood, 1.7, 0.05, 0.1, 0.55, 1.15, 1.65);
-    addBlock(group, mats.color, 0, 1.9, 1.46, 0.16, 0.75, 0.16);
+    addBlock(group, mats.plaster, 0, 0, 0, 3.35, 1.05, 2.35);
+    addRoofPrism(group, mats.roof, 0, 1.05, 0, 3.75, 0.85, 2.7);
+    addBlock(group, mats.wood, -0.72, 0.12, 1.22, 0.62, 0.68, 0.14);
+    addBlock(group, mats.wood, 0.72, 0.12, 1.22, 0.62, 0.68, 0.14);
+    addBlock(group, mats.color, 0, 1.88, 1.3, 0.18, 0.62, 0.18);
   } else if (type === "solar") {
-    addBlock(group, mats.stone, 0, 0, 0, 1.3, 0.55, 1.3);
+    addBlock(group, mats.stone, 0, 0, 0, 1.2, 0.45, 1.2);
     for (let i = -1; i <= 1; i += 2) {
-      const panel = addBlock(group, mats.glass, i * 0.95, 0.65, 0, 1.35, 0.12, 2.2);
+      const panel = addBlock(group, mats.glass, i * 0.9, 0.52, 0, 1.35, 0.12, 2.15);
       panel.rotation.z = i * -0.22;
     }
   } else if (type === "turret") {
-    addStoneTower(group, mats, true);
+    addBlock(group, mats.stone, 0, 0, 0, 1.65, 2.45, 1.65);
+    addBlock(group, mats.trim, 0, 2.42, 0, 1.95, 0.35, 1.95);
+    addCrenels(group, mats.stone, 2.76, 0.62, 0.62, 0.34);
+    const barrel = addBlock(group, mats.dark, 0, 2.46, 1.08, 0.26, 0.26, 1.35);
+    barrel.name = "barrel";
   } else if (type === "academy") {
-    addVillageHouse(group, mats, mats.thatch);
-    addBlock(group, mats.glass, 0, 1.18, -0.25, 1.05, 1.45, 1.05);
-    addRoofPrism(group, mats.accent, 0, 2.52, -0.25, 1.22, 0.72, 1.22);
-    addBlock(group, mats.accent, 0, 3.2, -0.25, 0.3, 0.45, 0.3);
+    addBlock(group, mats.primary, 0, 0, 0, 2.4, 1.1, 2.4);
+    addBlock(group, mats.glass, 0, 1.08, 0, 1.18, 1.35, 1.18);
+    addRoofPrism(group, mats.accent, 0, 2.38, 0, 1.45, 0.65, 1.45);
+    addBlock(group, mats.trim, 0, 3.02, 0, 0.34, 0.4, 0.34);
   }
   return group;
 }
@@ -947,6 +970,7 @@ function createHealthBar(entity, width = 2) {
   const fill = addBlock(group, new THREE.MeshBasicMaterial({ color: 0x78d765 }), -width / 2, 0.01, 0, width, 0.09, 0.1);
   fill.geometry.translate(0.5, 0, 0);
   group.userData = { fill, bg, width };
+  group.visible = false;
   entity.healthBar = group;
   return group;
 }
@@ -959,16 +983,33 @@ function updateHealthBar(entity) {
   fill.scale.x = pct;
   fill.material.color.setHex(pct > 0.55 ? 0x78d765 : pct > 0.25 ? 0xe6c65b : 0xd65b4d);
   fill.position.x = -width / 2;
+  entity.healthBar.visible = pct < 0.995 || game.selected.includes(entity);
 }
 
 function syncStructureToTerrain(structure) {
-  const y = sampleTerrainHeight(structure.position.x, structure.position.z);
-  structure.position.y = y;
-  structure.group.position.copy(structure.position);
-  structure.selectRing.position.set(structure.position.x, y + 0.08, structure.position.z);
+  const x = structure.anchorX ?? structure.position.x;
+  const z = structure.anchorZ ?? structure.position.z;
+  const y = sampleTerrainHeight(x, z);
+  structure.position.set(x, y, z);
+  structure.group.position.set(x, y, z);
+  structure.group.rotation.set(0, structure.facing ?? 0, 0);
+  structure.group.updateMatrixWorld();
+  for (const blocker of blockers) {
+    if (blocker.owner === structure) {
+      blocker.x = x;
+      blocker.z = z;
+    }
+  }
+  structure.selectRing.position.set(x, y + 0.08, z);
   if (structure.healthBar) {
-    structure.healthBar.position.set(structure.position.x, y + structure.barHeight, structure.position.z);
+    structure.healthBar.position.set(x, y + structure.barHeight, z);
     structure.healthBar.lookAt(camera.position);
+  }
+}
+
+function enforceStructureAnchors() {
+  for (const structure of structures) {
+    if (structure.alive) syncStructureToTerrain(structure);
   }
 }
 
@@ -982,6 +1023,9 @@ function createStructure(type, faction, x, z, free = false) {
     type,
     name: definition.name,
     faction,
+    anchorX: x,
+    anchorZ: z,
+    facing: mapNoise(x, z, 41) * Math.PI * 2,
     position: new THREE.Vector3(x, sampleTerrainHeight(x, z), z),
     radius: definition.radius,
     hp: definition.hp,
@@ -1767,6 +1811,7 @@ function updateSelectionVisuals() {
   for (const structure of structures) {
     structure.selectRing.visible = game.selected.includes(structure);
     structure.selectRing.material = structure.faction === playerFaction ? materials.selection : materials.enemySelection;
+    if (structure.healthBar) structure.healthBar.visible = structure.hp < structure.maxHp || game.selected.includes(structure);
   }
 }
 
@@ -2228,6 +2273,7 @@ function animate() {
     updateMessage();
   }
   if (skySphere) skySphere.rotation.y += (dt || 0.002) * 0.01;
+  enforceStructureAnchors();
   updateCamera();
   uiTimer -= dt || 0.016;
   updateUI();
