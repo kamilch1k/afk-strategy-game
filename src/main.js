@@ -210,6 +210,7 @@ const BUILDING_TYPES = {
     weaponRange: 9,
     weaponDamage: 13,
     cooldown: 1.1,
+    income: { food: 0.5, ore: 0.4, power: 0.2 }, // passive trickle so a harassed economy never fully collapses
   },
   refinery: {
     name: "Refinery",
@@ -1948,8 +1949,8 @@ function separateUnits(unit) {
 }
 
 function updateWorker(unit, dt) {
-  const danger = nearestEnemyEntity(unit.position, unit.faction, 4.4);
-  if (danger && danger.kind === "unit") {
+  const danger = nearestEnemyEntity(unit.position, unit.faction, 4.2);
+  if (danger && danger.kind === "unit" && danger.role === "army") {
     tmpPoint.copy(unit.position).sub(danger.position).setY(0).normalize().multiplyScalar(5).add(unit.position);
     moveToward(unit, tmpPoint, dt);
     return;
@@ -1977,15 +1978,9 @@ function updateWorker(unit, dt) {
     if (unit.harvestTimer <= 0) {
       unit.harvestTimer = 0.55;
       const boost = 1 + structureCount(unit.faction, "refinery") * 0.12;
-      const amount = Math.min(node.amount, 8 * (unit.faction.bonus.gather ?? 1) * boost);
-      node.amount -= amount;
-      unit.cargo = amount;
+      // ponytail: non-depleting nodes — an AFK economy should never permanently dry up, so every civ keeps fielding armies
+      unit.cargo = 8 * (unit.faction.bonus.gather ?? 1) * boost;
       unit.cargoType = node.type;
-      node.group.scale.setScalar(clamp(node.amount / node.maxAmount, 0.28, 1));
-      if (node.amount <= 0) {
-        resourceGroup.remove(node.group);
-        removeFrom(resourceNodes, node);
-      }
     }
   }
 }
@@ -2282,12 +2277,13 @@ function thinkFaction(faction, dt) {
   // (Local defense is handled per-unit in updateCombatUnit's guard state — no army-wide recall needed.)
   const ready = armyUnits(faction);
   const waveMin = Math.max(6, Math.floor(targetArmy * 0.4));
-  if (faction.waveTimer <= 0 && ready.length >= waveMin && Math.random() < directive.aggression + 0.15) {
+  const escalation = clamp(game.time / 420, 0, 1); // total war ramps up over ~7 min so games conclude
+  if (faction.waveTimer <= 0 && ready.length >= waveMin && Math.random() < directive.aggression + 0.15 + escalation * 0.3) {
     const target = enemyHqTarget(faction);
     if (target) {
-      const count = Math.max(waveMin, Math.floor(ready.length * 0.65)); // commit a strike force, keep a home garrison
+      const count = Math.max(waveMin, Math.floor(ready.length * lerp(0.6, 0.95, escalation))); // commit more as the war drags on
       for (const unit of ready.slice(0, count)) unit.order = { type: "attack", target, objective: target };
-      faction.waveTimer = lerp(34, 14, directive.aggression) + rand(0, 8);
+      faction.waveTimer = lerp(30, 12, directive.aggression) * (1 - escalation * 0.45) + rand(0, 6);
       logEvent(`${faction.shortName} launches a strike at ${target.faction.shortName}.`);
     }
   }
