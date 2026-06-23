@@ -440,6 +440,7 @@ window.__afkStrategyDebug = {
     renderer.render(scene, camera);
   },
   drawMinimap: () => drawMinimap(),
+  ui: () => updateUI(true),
   look: (x, z, dist, yaw, pitch) => {
     cameraState.target.set(x, CAMERA_LOOK_HEIGHT, z);
     if (dist) cameraState.distance = clamp(dist, MIN_ZOOM, MAX_ZOOM);
@@ -2733,15 +2734,24 @@ function updateUI(force = false) {
   lossesReadout.textContent = game.stats.losses;
   const alive = factions.filter((faction) => !faction.defeated).length;
   aliveReadout.textContent = `${alive} alive`;
-  winnerReadout.textContent = game.winner ? `${game.winner.shortName} victory` : "Skirmish";
+  winnerReadout.textContent = game.winner
+    ? `${game.winner.shortName} victory`
+    : !game.started
+      ? "Skirmish"
+      : game.suddenDeathOn
+        ? "⚔ Sudden death"
+        : `SD in ${formatTime(Math.max(0, SUDDEN_DEATH_START - game.time))}`;
+  const leaderArmy = factions.reduce((max, f) => (f.defeated ? max : Math.max(max, armyUnits(f).length)), 0);
   civList.innerHTML = factions
     .map((faction) => {
       const liveUnits = faction.units.filter((unit) => unit.alive).length;
+      const armyCount = armyUnits(faction).length;
       const hq = faction.hq?.alive ? Math.round((faction.hq.hp / faction.hq.maxHp) * 100) : 0;
+      const isLeader = !faction.defeated && armyCount > 0 && armyCount === leaderArmy;
       return `
-        <div class="civ-row">
+        <div class="civ-row${isLeader ? " leader" : ""}${faction.defeated ? " out" : ""}">
           <span class="civ-dot" style="background:${colorHex(faction.color)}"></span>
-          <div><strong>${faction.shortName}</strong><span>${liveUnits} units | HQ ${hq}%</span></div>
+          <div><strong>${isLeader ? "★ " : ""}${faction.shortName}</strong><span>${armyCount} army · ${liveUnits} units · HQ ${hq}%</span></div>
           <span>${faction.defeated ? "Out" : DIRECTIVES[faction.directive].label.split(" ")[0]}</span>
         </div>
       `;
