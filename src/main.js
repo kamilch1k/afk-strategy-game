@@ -38,6 +38,7 @@ createIcons({
 });
 
 const canvas = document.querySelector("#world");
+const minimapCanvas = document.querySelector("#minimap");
 const selectionBox = document.querySelector("#selectionBox");
 const civName = document.querySelector("#civName");
 const directiveReadout = document.querySelector("#directiveReadout");
@@ -92,7 +93,7 @@ const TERRAIN_BASE_Y = -1.2;
 const SKY_RADIUS = 820;
 const SAVE_KEY = "afkDominionRtsStats";
 const MAP_SEED = Math.random() * 10000;
-const MAX_PIXEL_RATIO = 1.15;
+const MAX_PIXEL_RATIO = 1.6;
 const ISO_YAW = -Math.PI / 4;
 const ISO_PITCH = 0.82;
 const MIN_PITCH = 0.42; // clamp camera pitch while rotating (radians)
@@ -199,6 +200,17 @@ const TERRAIN_FEATURES = [
   { x: 8, z: 30, height: 1.35, rx: 22, rz: 9 },
   { x: 30, z: 24, height: 1.25, rx: 10, rz: 13 },
   { x: -4, z: -34, height: 1.75, rx: 20, rz: 8 },
+  // more hills spread across the larger map for varied terrain
+  { x: -64, z: 8, height: 2.7, rx: 16, rz: 14 },
+  { x: 60, z: -16, height: 2.5, rx: 15, rz: 17 },
+  { x: 40, z: 62, height: 2.2, rx: 18, rz: 12 },
+  { x: -46, z: 46, height: 2.0, rx: 14, rz: 16 },
+  { x: 14, z: -64, height: 2.4, rx: 20, rz: 13 },
+  { x: -22, z: 72, height: 2.1, rx: 22, rz: 11 },
+  { x: 80, z: 32, height: 2.9, rx: 13, rz: 18 },
+  { x: -80, z: -42, height: 2.7, rx: 15, rz: 15 },
+  { x: 54, z: -52, height: 2.0, rx: 17, rz: 14 },
+  { x: 2, z: 6, height: 1.5, rx: 24, rz: 22 },
 ];
 
 const BUILDING_TYPES = {
@@ -325,7 +337,7 @@ const TERRAIN_PATTERNS = {
 const scene = new THREE.Scene();
 const renderer = new THREE.WebGLRenderer({
   canvas,
-  antialias: false,
+  antialias: true,
   powerPreference: "high-performance",
 });
 renderer.outputColorSpace = THREE.SRGBColorSpace;
@@ -426,6 +438,7 @@ window.__afkStrategyDebug = {
     updateCamera();
     renderer.render(scene, camera);
   },
+  drawMinimap: () => drawMinimap(),
   look: (x, z, dist, yaw, pitch) => {
     cameraState.target.set(x, CAMERA_LOOK_HEIGHT, z);
     if (dist) cameraState.distance = clamp(dist, MIN_ZOOM, MAX_ZOOM);
@@ -2812,6 +2825,14 @@ function bindEvents() {
     updateCamera();
   });
   resetViewButton.addEventListener("click", resetCamera);
+  minimapCanvas?.addEventListener("click", (event) => {
+    const rect = minimapCanvas.getBoundingClientRect();
+    const wx = ((event.clientX - rect.left) / rect.width) * MAP_SIZE - HALF_MAP;
+    const wz = ((event.clientY - rect.top) / rect.height) * MAP_SIZE - HALF_MAP;
+    cameraState.target.x = clamp(wx, -HALF_MAP + 8, HALF_MAP - 8);
+    cameraState.target.z = clamp(wz, -HALF_MAP + 8, HALF_MAP - 8);
+    updateCamera();
+  });
   zoomInButton.addEventListener("click", () => zoomCamera(0.86));
   zoomOutButton.addEventListener("click", () => zoomCamera(1.14));
   pauseToggle.addEventListener("click", togglePause);
@@ -2831,6 +2852,70 @@ function bindEvents() {
   });
   attackOrderButton.addEventListener("click", orderSelectedAttack);
   defendOrderButton.addEventListener("click", orderSelectedDefend);
+}
+
+let minimapTerrain = null;
+let minimapTimer = 0;
+const MINIMAP_RES = 168;
+
+function buildMinimapTerrain() {
+  const c = document.createElement("canvas");
+  c.width = MINIMAP_RES;
+  c.height = MINIMAP_RES;
+  const ctx = c.getContext("2d");
+  const img = ctx.createImageData(MINIMAP_RES, MINIMAP_RES);
+  for (let py = 0; py < MINIMAP_RES; py += 1) {
+    for (let px = 0; px < MINIMAP_RES; px += 1) {
+      const wx = (px / MINIMAP_RES) * MAP_SIZE - HALF_MAP;
+      const wz = (py / MINIMAP_RES) * MAP_SIZE - HALF_MAP;
+      let r;
+      let g;
+      let b;
+      if (isWater(wx, wz)) {
+        r = 36; g = 86; b = 122; // water
+      } else {
+        const h = clamp(sampleTerrainHeight(wx, wz), 0, 3) / 3; // green lowland -> grey-brown highland
+        r = Math.round(lerp(60, 124, h));
+        g = Math.round(lerp(112, 98, h));
+        b = Math.round(lerp(62, 82, h));
+      }
+      const i = (py * MINIMAP_RES + px) * 4;
+      img.data[i] = r;
+      img.data[i + 1] = g;
+      img.data[i + 2] = b;
+      img.data[i + 3] = 255;
+    }
+  }
+  ctx.putImageData(img, 0, 0);
+  minimapTerrain = c;
+}
+
+function drawMinimap() {
+  if (!minimapCanvas || !minimapTerrain) return;
+  const ctx = minimapCanvas.getContext("2d");
+  const W = minimapCanvas.width;
+  const H = minimapCanvas.height;
+  ctx.imageSmoothingEnabled = false;
+  ctx.drawImage(minimapTerrain, 0, 0, W, H);
+  const sx = W / MAP_SIZE;
+  const sz = H / MAP_SIZE;
+  for (const s of structures) {
+    if (!s.alive) continue;
+    const size = s.type === "hq" ? 5 : 3;
+    ctx.fillStyle = colorHex(s.faction.color);
+    ctx.fillRect((s.position.x + HALF_MAP) * sx - size / 2, (s.position.z + HALF_MAP) * sz - size / 2, size, size);
+  }
+  for (const u of units) {
+    if (!u.alive) continue;
+    ctx.fillStyle = colorHex(u.faction.color);
+    ctx.fillRect((u.position.x + HALF_MAP) * sx - 1, (u.position.z + HALF_MAP) * sz - 1, 2, 2);
+  }
+  const aspect = window.innerWidth / window.innerHeight;
+  const halfW = cameraState.distance * VIEW_TANGENT * aspect;
+  const halfH = cameraState.distance * VIEW_TANGENT;
+  ctx.strokeStyle = "rgba(255,255,255,0.85)";
+  ctx.lineWidth = 1;
+  ctx.strokeRect((cameraState.target.x - halfW + HALF_MAP) * sx, (cameraState.target.z - halfH + HALF_MAP) * sz, halfW * 2 * sx, halfH * 2 * sz);
 }
 
 function stepSimulation(dt) {
@@ -2857,6 +2942,11 @@ function animate() {
   updateCamera();
   uiTimer -= dt || 0.016;
   updateUI();
+  minimapTimer -= dt || 0.016;
+  if (minimapTimer <= 0) {
+    minimapTimer = 0.12; // ~8fps minimap refresh
+    drawMinimap();
+  }
   renderer.render(scene, camera);
 }
 
@@ -2865,6 +2955,7 @@ function init() {
   createSkybox();
   createLighting();
   createTerrain();
+  buildMinimapTerrain();
   resetWorld();
   game.started = false;
   game.paused = true;
