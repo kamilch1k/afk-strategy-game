@@ -112,6 +112,7 @@ const PATH_BUDGET = 6; // max A* solves processed per frame (the rest wait in a 
 const RESOURCE_LOW_WATER = 85;
 const THINK_INTERVAL = 2.1;
 const SUDDEN_DEATH_START = 480; // seconds — after this every HQ decays so a match can't stalemate forever
+const RESTART_DELAY = 7; // seconds the victory banner shows before the next skirmish auto-starts (the AFK loop)
 const UI_INTERVAL = 0.18;
 
 const tmpVec = new THREE.Vector3();
@@ -1660,6 +1661,8 @@ function resetWorld() {
   game.time = 0;
   game.winner = null;
   game.suddenDeathOn = false;
+  game.over = false;
+  game.restartTimer = 0;
   game.stats.kills = 0;
   game.stats.losses = 0;
   game.stats.buildingsBuilt = 0;
@@ -2379,6 +2382,8 @@ function checkWinner() {
     stats.renown = (stats.renown ?? 0) + game.stats.kills + (champ?.player ? 60 : 0); // earn Renown from your kills, bonus for winning
     saveStats(stats);
     updateMenuStats();
+    game.over = true;
+    game.restartTimer = RESTART_DELAY; // auto-start the next skirmish so the AFK loop keeps running
   }
 }
 
@@ -3005,6 +3010,12 @@ function updateSuddenDeath(dt) {
 }
 
 function stepSimulation(dt) {
+  if (game.over) {
+    // hold on the victory banner, then auto-start the next skirmish
+    game.restartTimer -= dt;
+    if (game.restartTimer <= 0) startGame();
+    return;
+  }
   game.time += dt;
   updateKeyboardCamera(dt);
   rebuildSpatial();
