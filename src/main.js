@@ -1747,6 +1747,9 @@ function resetWorld() {
   game.suddenDeathOn = false;
   game.over = false;
   game.restartTimer = 0;
+  combatFocus.time = -999; // forget last match's battle location (else the ping/Follow point at stale coords)
+  combatFocus.x = 0;
+  combatFocus.z = 0;
   game.stats.kills = 0;
   game.stats.losses = 0;
   game.stats.buildingsBuilt = 0;
@@ -3216,6 +3219,17 @@ function drawMinimap() {
     if (!u.alive) continue;
     ctx.fillStyle = colorHex(u.faction.color);
     ctx.fillRect((u.position.x + HALF_MAP) * sx - 1, (u.position.z + HALF_MAP) * sz - 1, 2, 2);
+  }
+  if (combatFocus.time > game.time - 8) {
+    // ping the active battle so the hotspot is visible at a glance (same source as Focus/Follow)
+    const cx = (combatFocus.x + HALF_MAP) * sx;
+    const cy = (combatFocus.z + HALF_MAP) * sz;
+    const r = 4 + 1.5 * (1 + Math.sin(game.time * 3.5)); // gentle pulse
+    ctx.strokeStyle = "rgba(120,230,255,0.95)";
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.arc(cx, cy, r, 0, Math.PI * 2);
+    ctx.stroke();
   }
   const aspect = window.innerWidth / window.innerHeight;
   const halfW = cameraState.distance * VIEW_TANGENT * aspect;
