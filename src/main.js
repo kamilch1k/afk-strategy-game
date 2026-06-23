@@ -99,7 +99,7 @@ const TERRAIN_TEXTURE_SIZE = 8;
 const TERRAIN_BASE_Y = -1.2;
 const SKY_RADIUS = 820;
 const SAVE_KEY = "afkDominionRtsStats";
-const MAP_SEED = Math.random() * 10000;
+let MAP_SEED = Math.random() * 10000; // re-rolled each match so every skirmish gets a fresh map
 const MAX_PIXEL_RATIO = 1.6;
 const ISO_YAW = -Math.PI / 4;
 const ISO_PITCH = 0.82;
@@ -608,6 +608,11 @@ window.__afkStrategyDebug = {
   })),
   ui: () => { updateUI(true); return { renown: document.querySelector("#renownReadout")?.textContent, bankedRenown, kills: game.stats.kills }; },
   attackDamage: (sourceType, targetKind, baseDamage) => attackDamage(sourceType, targetKind, baseDamage),
+  mapProbe: () => ({
+    seed: Number(MAP_SEED.toFixed(1)),
+    heights: [[0, 20], [30, -30], [-40, 10], [55, 55]].map(([x, z]) => Number(sampleTerrainHeight(x, z).toFixed(2))),
+    terrainChildren: terrainGroup.children.length,
+  }),
   paletteProbe: () => factions.map((f) => {
     const m = factionMaterials(f);
     return { id: f.id, stone: m.stone.color.getHexString(), roof: m.roof.color.getHexString(), trim: m.trim.color.getHexString(), skin: (f.palette?.skin ?? 0xe8c08c).toString(16) };
@@ -1053,6 +1058,10 @@ function geometryFromBuffers(buffers) {
 }
 
 function createTerrain() {
+  // free the previous build's ground/skirt geometry before rebuilding (trees/rocks share cubeGeometry -> leave it)
+  for (const child of terrainGroup.children) {
+    if (child.isMesh && child.geometry && child.geometry !== cubeGeometry) child.geometry.dispose();
+  }
   terrainGroup.clear();
   buildHeightField();
   buildNavGrid();
@@ -1779,6 +1788,9 @@ function resetWorld() {
   game.stats.kills = 0;
   game.stats.losses = 0;
   game.stats.buildingsBuilt = 0;
+  MAP_SEED = Math.random() * 10000; // fresh terrain each match: new river course, hills and scatter
+  createTerrain();
+  buildMinimapTerrain();
   for (const blueprint of FACTION_BLUEPRINTS) {
     const faction = createFaction(blueprint);
     factions.push(faction);
@@ -3360,9 +3372,7 @@ function init() {
   initMaterials();
   createSkybox();
   createLighting();
-  createTerrain();
-  buildMinimapTerrain();
-  resetWorld();
+  resetWorld(); // builds the terrain (with a fresh seed) and the world
   game.started = false;
   game.paused = true;
   mainMenu.classList.remove("hidden");
