@@ -53,6 +53,7 @@ const hqMeter = document.querySelector("#hqMeter");
 const timeReadout = document.querySelector("#timeReadout");
 const pauseToggle = document.querySelector("#pauseToggle");
 const speedToggle = document.querySelector("#speedToggle");
+const focusBattleButton = document.querySelector("#focusBattle");
 const resetViewButton = document.querySelector("#resetView");
 const zoomInButton = document.querySelector("#zoomIn");
 const zoomOutButton = document.querySelector("#zoomOut");
@@ -420,6 +421,7 @@ let skySphere = null;
 let hoverEntity = null;
 let uiTimer = 0;
 let gameSpeed = 1; // fast-forward multiplier (1/2/4): runs that many sim sub-steps per frame
+const combatFocus = { x: 0, z: 0, time: -999 }; // EMA of where fighting is happening, for the Focus-battle camera button
 let playerDmgMul = 1; // player-unit multipliers from purchased Renown upgrades (recomputed each game)
 let playerHpMul = 1;
 let playerEcoMul = 1;
@@ -587,6 +589,16 @@ window.__afkStrategyDebug = {
     food: Math.floor(f.resources.food),
     ore: Math.floor(f.resources.ore),
   })),
+  combatFocus: () => ({
+    x: Number(combatFocus.x.toFixed(2)),
+    z: Number(combatFocus.z.toFixed(2)),
+    recent: combatFocus.time > game.time - 8,
+    age: Number((game.time - combatFocus.time).toFixed(2)),
+  }),
+  focusBattle: () => {
+    focusBattle();
+    return { targetX: Number(cameraState.target.x.toFixed(2)), targetZ: Number(cameraState.target.z.toFixed(2)) };
+  },
 };
 
 const pointer = {
@@ -2253,6 +2265,13 @@ function damageEntity(entity, amount, sourceFaction, sourceUnit = null) {
   if (!entity?.alive) return;
   entity.hp -= amount;
   if (entity.healthBar) updateHealthBar(entity);
+  if (sourceFaction && entity.faction !== sourceFaction) {
+    // track where real inter-faction fighting is; snap if the last hit was long ago, else ease
+    const blend = combatFocus.time > game.time - 4 ? 0.08 : 1;
+    combatFocus.x += (entity.position.x - combatFocus.x) * blend;
+    combatFocus.z += (entity.position.z - combatFocus.z) * blend;
+    combatFocus.time = game.time;
+  }
   if (entity.hp > 0) return;
   entity.alive = false;
   if (entity.kind === "unit") {
@@ -2733,6 +2752,16 @@ function resetCamera() {
   updateCamera();
 }
 
+function focusBattle() {
+  if (!game.started || combatFocus.time < game.time - 8) {
+    showMessage("No active battle");
+    return;
+  }
+  cameraState.target.x = clamp(combatFocus.x, -HALF_MAP + 8, HALF_MAP - 8);
+  cameraState.target.z = clamp(combatFocus.z, -HALF_MAP + 8, HALF_MAP - 8);
+  updateCamera();
+}
+
 function setDirective(id) {
   game.directive = id;
   if (playerFaction) playerFaction.directive = id;
@@ -3051,6 +3080,7 @@ function bindEvents() {
   zoomOutButton.addEventListener("click", () => zoomCamera(1.14));
   pauseToggle.addEventListener("click", togglePause);
   speedToggle?.addEventListener("click", cycleSpeed);
+  focusBattleButton?.addEventListener("click", focusBattle);
   startSkirmishButton.addEventListener("click", startGame);
   for (const btn of document.querySelectorAll(".upgrade-cell")) {
     btn.addEventListener("click", () => buyUpgrade(btn.dataset.upgrade));
