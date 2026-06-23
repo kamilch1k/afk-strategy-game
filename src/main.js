@@ -426,10 +426,12 @@ let autoSpectate = false; // when on, the camera auto-follows combatFocus each s
 let playerDmgMul = 1; // player-unit multipliers from purchased Renown upgrades (recomputed each game)
 let playerHpMul = 1;
 let playerEcoMul = 1;
+let playerSupplyBonus = 0; // flat supply-cap bonus for the player faction from the Supply Lines upgrade
 const UPGRADES = [
   { id: "dmg", name: "Forged Blades", max: 8 },
   { id: "hp", name: "Tempered Plate", max: 8 },
   { id: "eco", name: "War Economy", max: 8 },
+  { id: "supply", name: "Supply Lines", max: 8 },
 ];
 const upgradeCost = (level) => 80 * (level + 1); // escalating Renown cost per level
 
@@ -510,6 +512,7 @@ window.__afkStrategyDebug = {
     playerFood: Math.floor(playerFaction?.resources.food ?? 0),
     kills: game.stats.kills,
     playerTech: playerFaction?.tech ?? 0,
+    playerSupplyCap: playerFaction ? supplyCap(playerFaction) : 0,
     yaw: Number(cameraState.yaw.toFixed(3)),
     pitch: Number(cameraState.pitch.toFixed(3)),
   }),
@@ -1768,9 +1771,10 @@ function currentSupply(faction) {
 }
 
 function supplyCap(faction) {
-  return faction.structures
+  const base = faction.structures
     .filter((structure) => structure.alive)
     .reduce((sum, structure) => sum + (BUILDING_TYPES[structure.type].supply ?? 0), 0);
+  return base + (faction.player ? playerSupplyBonus : 0);
 }
 
 function hasStructure(faction, type) {
@@ -3027,6 +3031,7 @@ function startGame() {
   playerDmgMul = 1 + 0.08 * (ups.dmg ?? 0);
   playerHpMul = 1 + 0.08 * (ups.hp ?? 0);
   playerEcoMul = 1 + 0.12 * (ups.eco ?? 0);
+  playerSupplyBonus = 4 * (ups.supply ?? 0); // +4 army supply cap per level
   game.offlineEarned = 0; // consumed once shown on the menu
   resetWorld();
   game.started = true;
