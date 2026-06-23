@@ -2489,14 +2489,18 @@ function checkWinner() {
     const champ = alive[0] ?? null; // length 0 == the last HQs fell on the same frame: a draw
     game.winner = champ ?? { name: "No one", shortName: "Draw", player: false };
     winnerReadout.textContent = champ ? `${champ.shortName} victory` : "Draw";
-    showVictory(champ ? `${champ.shortName.toUpperCase()} VICTORY` : "MUTUAL DESTRUCTION");
+    const earned = game.stats.kills + (champ?.player ? 60 : 0); // Renown banked this match
+    showVictory(
+      champ ? `${champ.shortName.toUpperCase()} VICTORY` : "MUTUAL DESTRUCTION",
+      `${formatTime(game.time)} · ${game.stats.kills} kills · +${earned} Renown`,
+    );
     logEvent(champ ? `${champ.name} wins the skirmish.` : "Every HQ has fallen — the skirmish is a draw.");
     const stats = loadStats();
     stats.sessions += 1;
     stats.bestTime = Math.max(stats.bestTime, game.time);
     stats.bestKills = Math.max(stats.bestKills, game.stats.kills);
     if (champ?.player) stats.wins += 1;
-    stats.renown = (stats.renown ?? 0) + game.stats.kills + (champ?.player ? 60 : 0); // earn Renown from your kills, bonus for winning
+    stats.renown = (stats.renown ?? 0) + earned; // earn Renown from your kills, bonus for winning
     bankedRenown = stats.renown;
     saveStats(stats);
     updateMenuStats();
@@ -2826,8 +2830,10 @@ function showMessage(text) {
   game.lastMessageAt = game.time;
 }
 
-function showVictory(text) {
-  battleMessage.textContent = text;
+function showVictory(text, subtitle = "") {
+  battleMessage.innerHTML = subtitle
+    ? `<span class="victory-title">${text}</span><span class="victory-sub">${subtitle}</span>`
+    : text;
   battleMessage.classList.add("show", "victory");
 }
 
