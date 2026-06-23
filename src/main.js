@@ -48,6 +48,7 @@ const foodReadout = document.querySelector("#foodReadout");
 const oreReadout = document.querySelector("#oreReadout");
 const powerReadout = document.querySelector("#powerReadout");
 const supplyReadout = document.querySelector("#supplyReadout");
+const renownReadout = document.querySelector("#renownReadout");
 const hqReadout = document.querySelector("#hqReadout");
 const hqMeter = document.querySelector("#hqMeter");
 const timeReadout = document.querySelector("#timeReadout");
@@ -427,6 +428,7 @@ let playerDmgMul = 1; // player-unit multipliers from purchased Renown upgrades 
 let playerHpMul = 1;
 let playerEcoMul = 1;
 let playerSupplyBonus = 0; // flat supply-cap bonus for the player faction from the Supply Lines upgrade
+let bankedRenown = 0; // Renown in the bank (mirrors saved stats), for the live HUD readout
 const UPGRADES = [
   { id: "dmg", name: "Forged Blades", max: 8 },
   { id: "hp", name: "Tempered Plate", max: 8 },
@@ -596,6 +598,7 @@ window.__afkStrategyDebug = {
     food: Math.floor(f.resources.food),
     ore: Math.floor(f.resources.ore),
   })),
+  ui: () => { updateUI(true); return { renown: document.querySelector("#renownReadout")?.textContent, bankedRenown, kills: game.stats.kills }; },
   combatFocus: () => ({
     x: Number(combatFocus.x.toFixed(2)),
     z: Number(combatFocus.z.toFixed(2)),
@@ -2494,6 +2497,7 @@ function checkWinner() {
     stats.bestKills = Math.max(stats.bestKills, game.stats.kills);
     if (champ?.player) stats.wins += 1;
     stats.renown = (stats.renown ?? 0) + game.stats.kills + (champ?.player ? 60 : 0); // earn Renown from your kills, bonus for winning
+    bankedRenown = stats.renown;
     saveStats(stats);
     updateMenuStats();
     game.over = true;
@@ -2887,6 +2891,7 @@ function updateUI(force = false) {
   armyReadout.textContent = `${army} army`;
   buildingReadout.textContent = player.structures.filter((item) => item.alive).length;
   killsReadout.textContent = game.stats.kills;
+  if (renownReadout) renownReadout.textContent = !game.over && game.stats.kills > 0 ? `${bankedRenown} +${game.stats.kills}` : String(bankedRenown);
   lossesReadout.textContent = game.stats.losses;
   const alive = factions.filter((faction) => !faction.defeated).length;
   aliveReadout.textContent = `${alive} alive`;
@@ -3044,7 +3049,9 @@ function setPaused(paused, showPauseMenu = false) {
 }
 
 function startGame() {
-  const ups = loadStats().upgrades ?? {}; // apply purchased Renown upgrades to the player faction
+  const startStats = loadStats();
+  const ups = startStats.upgrades ?? {}; // apply purchased Renown upgrades to the player faction
+  bankedRenown = startStats.renown ?? 0;
   playerDmgMul = 1 + 0.08 * (ups.dmg ?? 0);
   playerHpMul = 1 + 0.08 * (ups.hp ?? 0);
   playerEcoMul = 1 + 0.12 * (ups.eco ?? 0);
