@@ -600,6 +600,18 @@ window.__afkStrategyDebug = {
   })),
   ui: () => { updateUI(true); return { renown: document.querySelector("#renownReadout")?.textContent, bankedRenown, kills: game.stats.kills }; },
   attackDamage: (sourceType, targetKind, baseDamage) => attackDamage(sourceType, targetKind, baseDamage),
+  skirmishTest: () => {
+    // two opposing soldiers 4 apart in open field (map centre, far from any base), both ordered to attack:
+    // with field engagement they should close and damage each other instead of marching past.
+    const a = factions[1], b = factions[2];
+    const ua = spawnUnit("soldier", a, -2, 0, true);
+    const ub = spawnUnit("soldier", b, 2, 0, true);
+    ua.order = { type: "attack", target: null, objective: null };
+    ub.order = { type: "attack", target: null, objective: null };
+    const hpA0 = ua.hp, hpB0 = ub.hp;
+    for (let i = 0; i < 100; i += 1) stepSimulation(0.05); // 5s
+    return { hpA0, hpB0, hpA: Number(ua.hp.toFixed(1)), hpB: Number(ub.hp.toFixed(1)), engaged: ua.hp < hpA0 || ub.hp < hpB0, aAlive: ua.alive, bAlive: ub.alive };
+  },
   combatFocus: () => ({
     x: Number(combatFocus.x.toFixed(2)),
     z: Number(combatFocus.z.toFixed(2)),
@@ -2147,6 +2159,7 @@ function updateWorker(unit, dt) {
 }
 
 const SIEGE_STRUCTURE_BONUS = 2.2; // Siege Walkers raze buildings; they're the way to break a defended base
+const ENGAGE_RADIUS = 6.5; // attackers fight enemies within this range en route instead of marching past them
 function attackDamage(sourceType, targetKind, baseDamage) {
   return sourceType === "siege" && targetKind === "structure" ? baseDamage * SIEGE_STRUCTURE_BONUS : baseDamage;
 }
@@ -2178,19 +2191,26 @@ function updateCombatUnit(unit, dt) {
     else navigateTo(unit, unit.faction.rallyPoint ?? unit.faction.hq.position, dt, 2.4);
     return;
   }
-  // Attack order = drive on an objective base and clear it building-by-building once in range, so the
-  // strike concentrates fire and actually razes the HQ (engaging field skirmishers en route stalls it).
+  // Attack order = drive on an enemy base. Fight what you meet on the way (units used to march straight past
+  // each other), then raze the base building-by-building once you arrive.
   if (!unit.order.objective || !unit.order.objective.alive) unit.order.objective = enemyHqTarget(unit.faction);
   const obj = unit.order.objective;
   if (!obj) {
     unit.order = { type: "guard", target: null, point: unit.faction.rallyPoint.clone() };
     return;
   }
-  // Once at the base, raze it building-by-building (nearest structure first: turrets/production, HQ last) so
-  // the assault actually levels the enemy instead of brawling the defender screen forever. The defenders are on
-  // guard orders and shoot the besiegers, so the perimeter stays a live fight while the base comes down.
+  // At the base: raze it (nearest structure first: turrets/production, HQ last) instead of brawling the
+  // defender screen forever. Defenders are on guard orders and shoot the besiegers, so the perimeter stays live.
   const atBase = unit.position.distanceToSquared(obj.position) < 22 * 22;
-  fireOrAdvance(unit, atBase ? nearestEnemyStructure(unit.position, unit.faction, 26) ?? obj : obj, dt);
+  if (atBase) {
+    fireOrAdvance(unit, nearestEnemyStructure(unit.position, unit.faction, 26) ?? obj, dt);
+    return;
+  }
+  // En route: engage any enemy that comes within ENGAGE_RADIUS so armies actually clash in the field. Bounded
+  // so units don't chase across the map -- once the local foe is gone they resume the advance and the strike
+  // still reaches (and razes) the base, so matches still resolve.
+  const foe = nearestEnemyEntity(unit.position, unit.faction, ENGAGE_RADIUS);
+  fireOrAdvance(unit, foe ?? obj, dt);
 }
 
 function shotMaterial(faction) {
