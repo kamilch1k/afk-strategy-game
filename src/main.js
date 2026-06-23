@@ -85,6 +85,7 @@ const menuSessions = document.querySelector("#menuSessions");
 const menuBestTime = document.querySelector("#menuBestTime");
 const menuBestKills = document.querySelector("#menuBestKills");
 const menuWins = document.querySelector("#menuWins");
+const menuRenown = document.querySelector("#menuRenown");
 
 const MAP_SIZE = 200;
 const HALF_MAP = MAP_SIZE / 2;
@@ -398,6 +399,7 @@ let playerFaction = null;
 let skySphere = null;
 let hoverEntity = null;
 let uiTimer = 0;
+let renownBonus = 0; // permanent buff to the player's units, scaled by saved Renown (the incremental hook)
 
 const game = {
   started: false,
@@ -441,6 +443,11 @@ window.__afkStrategyDebug = {
   },
   drawMinimap: () => drawMinimap(),
   ui: () => updateUI(true),
+  renownInfo: () => {
+    const ps = units.find((u) => u.alive && u.faction.player && u.role === "army");
+    const as = ps ? units.find((u) => u.alive && !u.faction.player && u.role === "army" && u.type === ps.type) : null;
+    return { renownBonus: Number(renownBonus.toFixed(3)), saved: loadStats().renown ?? 0, playerType: ps?.type, playerBaseDmg: ps ? Number(ps.baseDamage.toFixed(2)) : null, aiBaseDmg: as ? Number(as.baseDamage.toFixed(2)) : null };
+  },
   look: (x, z, dist, yaw, pitch) => {
     cameraState.target.set(x, CAMERA_LOOK_HEIGHT, z);
     if (dist) cameraState.distance = clamp(dist, MIN_ZOOM, MAX_ZOOM);
@@ -1742,8 +1749,9 @@ function trainUnit(type, faction, source = null, free = false) {
 
 function spawnUnit(type, faction, x, z, free = false) {
   const definition = UNIT_TYPES[type];
-  const hp = Math.round(definition.hp * (faction.bonus.unitHp ?? 1));
-  const damage = definition.damage * (faction.bonus.unitDamage ?? 1);
+  const renownMul = faction.player ? 1 + renownBonus : 1; // your civilization grows stronger with Renown
+  const hp = Math.round(definition.hp * (faction.bonus.unitHp ?? 1) * renownMul);
+  const damage = definition.damage * (faction.bonus.unitDamage ?? 1) * renownMul;
   const speed = definition.speed * (faction.bonus.speed ?? 1);
   const texture = createUnitTexture(type, faction);
   const material = new THREE.SpriteMaterial({ map: texture, transparent: true, depthWrite: false });
@@ -2368,6 +2376,7 @@ function checkWinner() {
     stats.bestTime = Math.max(stats.bestTime, game.time);
     stats.bestKills = Math.max(stats.bestKills, game.stats.kills);
     if (champ?.player) stats.wins += 1;
+    stats.renown = (stats.renown ?? 0) + game.stats.kills + (champ?.player ? 60 : 0); // earn Renown from your kills, bonus for winning
     saveStats(stats);
     updateMenuStats();
   }
@@ -2794,9 +2803,9 @@ function costTitle(cost = {}) {
 
 function loadStats() {
   try {
-    return JSON.parse(localStorage.getItem(SAVE_KEY)) ?? { sessions: 0, bestTime: 0, bestKills: 0, wins: 0 };
+    return JSON.parse(localStorage.getItem(SAVE_KEY)) ?? { sessions: 0, bestTime: 0, bestKills: 0, wins: 0, renown: 0 };
   } catch {
-    return { sessions: 0, bestTime: 0, bestKills: 0, wins: 0 };
+    return { sessions: 0, bestTime: 0, bestKills: 0, wins: 0, renown: 0 };
   }
 }
 
@@ -2810,6 +2819,8 @@ function updateMenuStats() {
   menuBestTime.textContent = formatTime(stats.bestTime ?? 0);
   menuBestKills.textContent = stats.bestKills ?? 0;
   menuWins.textContent = stats.wins ?? 0;
+  const renown = stats.renown ?? 0;
+  if (menuRenown) menuRenown.textContent = `${renown} · +${Math.round(Math.min(0.5, renown / 1000) * 100)}%`;
 }
 
 function setMenuOpen(open) {
@@ -2829,6 +2840,7 @@ function setPaused(paused, showPauseMenu = false) {
 }
 
 function startGame() {
+  renownBonus = Math.min(0.5, (loadStats().renown ?? 0) / 1000); // up to +50% at 1000 Renown
   resetWorld();
   game.started = true;
   game.paused = false;
