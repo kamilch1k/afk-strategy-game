@@ -3006,6 +3006,8 @@ function bindEvents() {
     if (event.code === "Space") {
       event.preventDefault();
       togglePause();
+    } else if (game.started && /^(Digit|Numpad)[1-5]$/.test(event.code)) {
+      setDirective(["balanced", "economy", "military", "tech", "defense"][Number(event.code.slice(-1)) - 1]); // doctrine hotkeys
     }
   });
   window.addEventListener("keyup", (event) => keys.delete(event.code));
