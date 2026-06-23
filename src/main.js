@@ -505,6 +505,7 @@ window.__afkStrategyDebug = {
     factionsAlive: factions.filter((f) => !f.defeated).length,
     playerFood: Math.floor(playerFaction?.resources.food ?? 0),
     kills: game.stats.kills,
+    playerTech: playerFaction?.tech ?? 0,
     yaw: Number(cameraState.yaw.toFixed(3)),
     pitch: Number(cameraState.pitch.toFixed(3)),
   }),
@@ -579,6 +580,7 @@ window.__afkStrategyDebug = {
     defeated: f.defeated,
     units: f.units.filter((u) => u.alive).length,
     army: f.units.filter((u) => u.alive && u.role === "army").length,
+    tech: f.tech,
     attacking: f.units.filter((u) => u.alive && u.order?.type === "attack").length,
     structures: f.structures.filter((s) => s.alive).length,
     hq: f.hq?.alive ? Math.round(f.hq.hp) : 0,
@@ -2824,7 +2826,7 @@ function updateUI(force = false) {
       return `
         <div class="civ-row${isLeader ? " leader" : ""}${faction.defeated ? " out" : ""}">
           <span class="civ-dot" style="background:${colorHex(faction.color)}"></span>
-          <div><strong>${isLeader ? "★ " : ""}${faction.shortName}</strong><span>${armyCount} army · ${liveUnits} units · HQ ${hq}%</span></div>
+          <div><strong>${isLeader ? "★ " : ""}${faction.shortName}</strong><span>${armyCount} army · ${liveUnits} units · HQ ${hq}% · Tech ${faction.tech}</span></div>
           <span>${faction.defeated ? "Out" : DIRECTIVES[faction.directive].label.split(" ")[0]}</span>
         </div>
       `;
