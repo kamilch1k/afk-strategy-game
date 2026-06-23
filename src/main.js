@@ -608,6 +608,19 @@ window.__afkStrategyDebug = {
   })),
   ui: () => { updateUI(true); return { renown: document.querySelector("#renownReadout")?.textContent, bankedRenown, kills: game.stats.kills }; },
   attackDamage: (sourceType, targetKind, baseDamage) => attackDamage(sourceType, targetKind, baseDamage),
+  treeProbe: () => {
+    const leaf = { oak: 0, pine: 0, autumn: 0 }; // count tree crowns by leaf colour to confirm species variety
+    for (const child of terrainGroup.children) {
+      if (!child.isGroup) continue;
+      for (const m of child.children) {
+        const hex = m.material?.color?.getHexString?.();
+        if (hex === "3f8b42") leaf.oak += 1;
+        else if (hex === "2f5d3a") leaf.pine += 1;
+        else if (hex === "cf8b34") leaf.autumn += 1;
+      }
+    }
+    return leaf;
+  },
   mapProbe: () => ({
     seed: Number(MAP_SEED.toFixed(1)),
     heights: [[0, 20], [30, -30], [-40, 10], [55, 55]].map(([x, z]) => Number(sampleTerrainHeight(x, z).toFixed(2))),
@@ -787,8 +800,12 @@ function initMaterials() {
     roughness: 0.96,
   });
   materials.trunk = new THREE.MeshStandardMaterial({ color: 0x6a4324, roughness: 0.92, flatShading: true });
+  materials.trunkPale = new THREE.MeshStandardMaterial({ color: 0xb8b0a0, roughness: 0.9, flatShading: true }); // birch/light bark
   materials.leaves = new THREE.MeshStandardMaterial({ color: 0x3f8b42, roughness: 0.96, flatShading: true });
   materials.leavesDark = new THREE.MeshStandardMaterial({ color: 0x2f6738, roughness: 0.98, flatShading: true });
+  materials.leavesPine = new THREE.MeshStandardMaterial({ color: 0x2f5d3a, roughness: 0.98, flatShading: true }); // conifer
+  materials.leavesAutumn = new THREE.MeshStandardMaterial({ color: 0xcf8b34, roughness: 0.96, flatShading: true });
+  materials.leavesAutumnDark = new THREE.MeshStandardMaterial({ color: 0xa5652a, roughness: 0.98, flatShading: true });
   materials.outcrop = new THREE.MeshStandardMaterial({ color: 0x747a74, roughness: 0.96, flatShading: true });
   materials.selection = new THREE.MeshBasicMaterial({
     color: 0xbce57f,
@@ -1341,11 +1358,25 @@ function isNearFactionStart(x, z, radius = 9) {
   return FACTION_BLUEPRINTS.some((blueprint) => distSq2(x, z, blueprint.start.x, blueprint.start.z) < radius * radius);
 }
 
-function createTreeCluster(x, z, height, scale = 1) {
+function createTreeCluster(x, z, height, scale = 1, type = "oak") {
   const group = new THREE.Group();
-  addBlock(group, materials.trunk, 0, 0, 0, 0.32 * scale, 1.05 * scale, 0.32 * scale);
-  addBlock(group, materials.leaves, 0, 1.02 * scale, 0, 1.25 * scale, 0.72 * scale, 1.25 * scale);
-  addBlock(group, materials.leavesDark, -0.24 * scale, 1.52 * scale, 0.14 * scale, 0.86 * scale, 0.58 * scale, 0.86 * scale);
+  if (type === "pine") {
+    // conifer: thin trunk + tapering stacked tiers to a point
+    addBlock(group, materials.trunk, 0, 0, 0, 0.26 * scale, 1.2 * scale, 0.26 * scale);
+    addBlock(group, materials.leavesPine, 0, 1.0 * scale, 0, 1.34 * scale, 0.62 * scale, 1.34 * scale);
+    addBlock(group, materials.leavesPine, 0, 1.5 * scale, 0, 0.98 * scale, 0.56 * scale, 0.98 * scale);
+    addBlock(group, materials.leavesPine, 0, 1.94 * scale, 0, 0.56 * scale, 0.52 * scale, 0.56 * scale);
+  } else if (type === "autumn") {
+    // golden broadleaf, slightly fuller crown
+    addBlock(group, materials.trunkPale, 0, 0, 0, 0.3 * scale, 1.1 * scale, 0.3 * scale);
+    addBlock(group, materials.leavesAutumn, 0, 1.06 * scale, 0, 1.3 * scale, 0.78 * scale, 1.3 * scale);
+    addBlock(group, materials.leavesAutumnDark, 0.22 * scale, 1.56 * scale, -0.14 * scale, 0.9 * scale, 0.6 * scale, 0.9 * scale);
+  } else {
+    // oak: round broadleaf (the original look)
+    addBlock(group, materials.trunk, 0, 0, 0, 0.32 * scale, 1.05 * scale, 0.32 * scale);
+    addBlock(group, materials.leaves, 0, 1.02 * scale, 0, 1.25 * scale, 0.72 * scale, 1.25 * scale);
+    addBlock(group, materials.leavesDark, -0.24 * scale, 1.52 * scale, 0.14 * scale, 0.86 * scale, 0.58 * scale, 0.86 * scale);
+  }
   group.position.set(x, height, z);
   freezeStaticObject(group);
   terrainGroup.add(group);
@@ -1375,7 +1406,9 @@ function createTerrainDetails() {
       if (height > 2.05 && noise > 0.42) {
         createRockOutcrop(px, pz, height, 0.75 + mapNoise(x, z, 4) * 0.65);
       } else if (height > 0.25 && height < 2.2 && noise > 0.82) {
-        createTreeCluster(px, pz, height, 0.78 + mapNoise(x, z, 5) * 0.45);
+        const tt = mapNoise(x, z, 7);
+        const type = tt < 0.44 ? "pine" : tt < 0.78 ? "oak" : "autumn"; // mixed forest
+        createTreeCluster(px, pz, height, 0.78 + mapNoise(x, z, 5) * 0.45, type);
       }
     }
   }
