@@ -12,6 +12,7 @@ import {
   Play,
   Shield,
   Swords,
+  Target,
   Users,
   Zap,
   ZoomIn,
@@ -30,6 +31,7 @@ createIcons({
     Play,
     Shield,
     Swords,
+    Target,
     Users,
     Zap,
     ZoomIn,
@@ -324,6 +326,19 @@ const UNIT_TYPES = {
     requiresTech: 1,
     splash: 1.8,
   },
+  archer: {
+    name: "Archer",
+    hp: 80,
+    damage: 11,
+    range: 3.4,
+    cooldown: 1.0,
+    speed: 4.2,
+    radius: 0.34,
+    supply: 1,
+    cost: { food: 38, ore: 18 },
+    role: "army",
+    trainAt: ["barracks"],
+  },
 };
 
 const RESOURCE_TYPES = {
@@ -516,6 +531,16 @@ window.__afkStrategyDebug = {
     }
     return { army: army.length, veterans, maxRank, sample };
   },
+  unitTypes: () => {
+    const counts = {};
+    let archerRange = null;
+    for (const u of units) {
+      if (!u.alive) continue;
+      counts[u.type] = (counts[u.type] || 0) + 1;
+      if (u.type === "archer" && archerRange === null) archerRange = u.range;
+    }
+    return { counts, archerRange };
+  },
   combatProbe: () => {
     let army = 0;
     let inContact = 0;
@@ -636,6 +661,14 @@ function createUnitTexture(type, faction) {
     rect(9, 9, 11, 6, "#5b6168"); // turret
     rect(18, 10, 11, 3, steel); // cannon
     rect(27, 9, 3, 5, dark); // muzzle
+  } else if (type === "archer") {
+    rect(12, 25, 3, 3, dark); rect(17, 25, 3, 3, dark); // legs
+    rect(12, 13, 9, 12, body); // tunic
+    rect(12, 13, 9, 2, accent);
+    rect(13, 7, 7, 7, skin); // head
+    rect(12, 6, 9, 3, accent); // cap
+    rect(24, 5, 2, 22, "#9b6a39"); rect(23, 4, 2, 2, "#9b6a39"); rect(23, 26, 2, 2, "#9b6a39"); // bow
+    rect(15, 15, 12, 1, steel); rect(27, 14, 3, 3, dark); // arrow + head
   } else {
     rect(12, 25, 3, 3, dark); rect(17, 25, 3, 3, dark);
     rect(8, 13, 4, 10, steel); // shield
@@ -2343,7 +2376,8 @@ function thinkFaction(faction, dt) {
   if (hasStructure(faction, "barracks") && army.length < targetArmy) {
     // train from every barracks each tick so armies grow to a fighting size
     for (let i = 0; i < structureCount(faction, "barracks"); i += 1) {
-      requestTrain(faction, Math.random() < 0.24 ? "scout" : "soldier");
+      const pick = Math.random();
+      requestTrain(faction, pick < 0.2 ? "scout" : pick < 0.55 ? "archer" : "soldier");
     }
   }
   if (hasStructure(faction, "academy") && faction.tech > 0 && army.length > 5 && Math.random() < 0.6) {
