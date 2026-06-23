@@ -618,6 +618,12 @@ window.__afkStrategyDebug = {
     g.traverse((o) => { if (o.isMesh) meshes += 1; });
     return { id: f.id, style: f.style, meshes };
   }),
+  academyProbe: () => factions.map((f) => {
+    const g = createStructureModel("academy", f);
+    let meshes = 0;
+    g.traverse((o) => { if (o.isMesh) meshes += 1; });
+    return { id: f.id, style: f.style, meshes };
+  }),
   hqProbe: () => factions.map((f) => {
     const hq = f.structures.find((s) => s.alive && s.type === "hq");
     let meshes = 0;
@@ -1582,6 +1588,26 @@ function addBarracksRoof(group, mats, style) {
   }
 }
 
+// Per-nation academy crown, matching the HQ/barracks so a base reads as one culture (keeps a glowing tip).
+function addAcademyRoof(group, mats, style) {
+  if (style === "fort") {
+    addBlock(group, mats.stone, 0, 2.6, 0, 1.9, 0.5, 1.9); // flat battlement roof
+    addCrenels(group, mats.stone, 2.92, 0.85, 0.85, 0.32);
+    addBlock(group, mats.accent, 0, 3.22, 0, 0.22, 0.5, 0.22); // glow finial
+  } else if (style === "dome") {
+    addBlock(group, mats.accent, 0, 2.62, 0, 1.4, 0.45, 1.4);
+    addBlock(group, mats.accent, 0, 3.0, 0, 0.82, 0.45, 0.82);
+    addBlock(group, mats.accent, 0, 3.36, 0, 0.3, 0.42, 0.3); // dome tip
+  } else if (style === "spire") {
+    addRoofPrism(group, mats.color, 0, 2.55, 0, 1.0, 1.8, 1.0); // tall arcane spire
+    addBlock(group, mats.accent, 0, 4.45, 0, 0.18, 0.5, 0.18); // glowing tip
+  } else {
+    addRoofPrism(group, mats.accent, 0, 2.78, 0, 1.6, 0.7, 1.6); // pitched (original)
+    addBlock(group, mats.trim, 0, 3.4, 0, 0.16, 0.7, 0.16);
+    addBlock(group, mats.accent, 0, 4.05, 0, 0.26, 0.26, 0.26); // glowing tip
+  }
+}
+
 function createStructureModel(type, faction) {
   const mats = factionMaterials(faction);
   const group = new THREE.Group();
@@ -1650,9 +1676,7 @@ function createStructureModel(type, faction) {
     addBlock(group, mats.trim, 0, 1.18, 0, 2.8, 0.2, 2.8);
     for (const sx of [-1, 1]) addBlock(group, mats.primary, sx * 1.0, 1.3, 0, 0.6, 0.9, 2.0); // wings
     addBlock(group, mats.glass, 0, 1.3, 0, 1.3, 1.5, 1.3); // glowing core
-    addRoofPrism(group, mats.accent, 0, 2.78, 0, 1.6, 0.7, 1.6); // dome
-    addBlock(group, mats.trim, 0, 3.4, 0, 0.16, 0.7, 0.16); // antenna
-    addBlock(group, mats.accent, 0, 4.05, 0, 0.26, 0.26, 0.26); // glowing tip
+    addAcademyRoof(group, mats, faction.style ?? "peaked"); // per-nation roofline
     for (const sz of [-1, 1]) addBlock(group, mats.glass, 0, 0.6, sz * 1.31, 1.4, 0.5, 0.06);
   }
   return group;
