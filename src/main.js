@@ -167,6 +167,7 @@ const FACTION_BLUEPRINTS = [
     material: 0x2f5d3f,
     // Verdant Concord — woodland/elven realm: warm timber, sage stone, living-green roofs
     palette: { stone: 0x9aa67e, trim: 0xdacfa2, wood: 0x6a4a2c, plaster: 0xccd4ad, roof: 0x4f9a52, thatch: 0xb39a56, skin: 0xe8c08c },
+    style: "peaked", // pitched timber roofs
     directive: "balanced",
     player: true,
     bonus: { gather: 1.12, workerCost: 0.92, unitHp: 1, unitDamage: 1 },
@@ -181,6 +182,7 @@ const FACTION_BLUEPRINTS = [
     material: 0x5a6066,
     // Iron Dominion — dwarven war-forge: dark iron stone, steel trim, blood-red roofs
     palette: { stone: 0x515861, trim: 0x828a91, wood: 0x46342a, plaster: 0x6c7176, roof: 0x9a3f34, thatch: 0x6a5238, skin: 0xd7a070 },
+    style: "fort", // flat battlemented fortress roofs
     directive: "military",
     bonus: { gather: 0.98, workerCost: 1, unitHp: 1.18, unitDamage: 1.04 },
   },
@@ -194,6 +196,7 @@ const FACTION_BLUEPRINTS = [
     material: 0x9d762f,
     // Sunspire League — sun/desert arcanists: golden sandstone, pale-gold trim, amber roofs
     palette: { stone: 0xd8b86a, trim: 0xf1e6bc, wood: 0x9c7636, plaster: 0xead9a2, roof: 0xdb9f3a, thatch: 0xc9a85c, skin: 0xe6b98a },
+    style: "dome", // gold onion domes
     directive: "tech",
     bonus: { gather: 1, workerCost: 1, unitHp: 0.96, unitDamage: 1.12, power: 1.22 },
   },
@@ -207,6 +210,7 @@ const FACTION_BLUEPRINTS = [
     material: 0x3f345d,
     // Umbral Nexus — shadow/void cult: obsidian-purple stone, dusky trim, arcane-purple roofs
     palette: { stone: 0x34314c, trim: 0x5b5680, wood: 0x2c2640, plaster: 0x433c60, roof: 0x6a4ea6, thatch: 0x4a3f6c, skin: 0xc8bce0 },
+    style: "spire", // tall arcane spires
     directive: "defense",
     bonus: { gather: 0.96, workerCost: 1, unitHp: 0.96, unitDamage: 1.08, speed: 1.14 },
   },
@@ -608,6 +612,21 @@ window.__afkStrategyDebug = {
   })),
   ui: () => { updateUI(true); return { renown: document.querySelector("#renownReadout")?.textContent, bankedRenown, kills: game.stats.kills }; },
   attackDamage: (sourceType, targetKind, baseDamage) => attackDamage(sourceType, targetKind, baseDamage),
+  hqProbe: () => factions.map((f) => {
+    const hq = f.structures.find((s) => s.alive && s.type === "hq");
+    let meshes = 0;
+    let localTop = 0;
+    if (hq) {
+      const baseY = hq.group.position.y;
+      hq.group.traverse((o) => {
+        if (!o.isMesh) return;
+        meshes += 1;
+        const b = new THREE.Box3().setFromObject(o);
+        localTop = Math.max(localTop, b.max.y - baseY);
+      });
+    }
+    return { id: f.id, style: f.style, meshes, crownTop: Number(localTop.toFixed(2)) };
+  }),
   treeProbe: () => {
     const leaf = { oak: 0, pine: 0, autumn: 0 }; // count tree crowns by leaf colour to confirm species variety
     for (const child of terrainGroup.children) {
@@ -1509,6 +1528,38 @@ function addWallSegment(group, mats, x, z, w, d) {
   }
 }
 
+function addHqFlag(group, mats, y) {
+  addBlock(group, mats.accent, 0, y, 0, 0.16, 1.1, 0.16); // flagpole
+  addBlock(group, mats.color, 0.4, y + 0.5, 0, 0.6, 0.38, 0.05); // banner
+}
+
+// Per-nation HQ crown atop the keep — same footprint, distinct silhouette (Polytopia-style).
+function addHqCrown(group, mats, style) {
+  addBlock(group, mats.color, 0, 2.95, 0, 2.45, 0.45, 2.45); // shared eaves
+  if (style === "fort") {
+    // Iron Dominion: flat battlemented fortress roof
+    addBlock(group, mats.stone, 0, 3.24, 0, 2.2, 0.55, 2.2);
+    addCrenels(group, mats.stone, 3.62, 1.0, 1.0, 0.42);
+    addHqFlag(group, mats, 4.0);
+  } else if (style === "dome") {
+    // Sunspire League: stacked gold onion dome
+    addBlock(group, mats.color, 0, 3.24, 0, 1.7, 0.5, 1.7);
+    addBlock(group, mats.accent, 0, 3.66, 0, 1.12, 0.5, 1.12);
+    addBlock(group, mats.accent, 0, 4.04, 0, 0.62, 0.46, 0.62);
+    addBlock(group, mats.accent, 0, 4.42, 0, 0.22, 0.5, 0.22); // finial
+    addHqFlag(group, mats, 4.85);
+  } else if (style === "spire") {
+    // Umbral Nexus: tall arcane spire to a glowing point
+    addBlock(group, mats.primary, 0, 3.22, 0, 1.3, 0.6, 1.3);
+    addRoofPrism(group, mats.color, 0, 3.55, 0, 1.0, 2.15, 1.0);
+    addBlock(group, mats.accent, 0, 5.55, 0, 0.18, 0.5, 0.18); // glowing tip
+  } else {
+    // Verdant Concord: pitched timber roof (the original)
+    addRoofPrism(group, mats.color, 0, 3.18, 0, 2.1, 0.95, 2.1);
+    addHqFlag(group, mats, 4.0);
+  }
+}
+
 function createStructureModel(type, faction) {
   const mats = factionMaterials(faction);
   const group = new THREE.Group();
@@ -1520,10 +1571,7 @@ function createStructureModel(type, faction) {
     addBlock(group, mats.dark, 0, 0.72, 1.46, 0.72, 1.05, 0.12); // gate
     addBlock(group, mats.glass, -0.78, 1.78, 1.47, 0.34, 0.42, 0.08);
     addBlock(group, mats.glass, 0.78, 1.78, 1.47, 0.34, 0.42, 0.08);
-    addBlock(group, mats.color, 0, 2.95, 0, 2.45, 0.45, 2.45); // eaves
-    addRoofPrism(group, mats.color, 0, 3.18, 0, 2.1, 0.95, 2.1); // pitched roof
-    addBlock(group, mats.accent, 0, 4.0, 0, 0.16, 1.1, 0.16); // flagpole
-    addBlock(group, mats.color, 0.4, 4.5, 0, 0.6, 0.38, 0.05); // banner
+    addHqCrown(group, mats, faction.style ?? "peaked"); // per-nation roof silhouette
     for (const sx of [-1, 1]) {
       for (const sz of [-1, 1]) {
         addBlock(group, mats.stone, sx * 1.85, 1.2, sz * 1.85, 0.9, 3.1, 0.9); // corner towers
