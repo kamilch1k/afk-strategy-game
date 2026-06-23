@@ -165,6 +165,8 @@ const FACTION_BLUEPRINTS = [
     color: 0x78c957,
     accent: 0xf0d46a,
     material: 0x2f5d3f,
+    // Verdant Concord — woodland/elven realm: warm timber, sage stone, living-green roofs
+    palette: { stone: 0x9aa67e, trim: 0xdacfa2, wood: 0x6a4a2c, plaster: 0xccd4ad, roof: 0x4f9a52, thatch: 0xb39a56, skin: 0xe8c08c },
     directive: "balanced",
     player: true,
     bonus: { gather: 1.12, workerCost: 0.92, unitHp: 1, unitDamage: 1 },
@@ -177,6 +179,8 @@ const FACTION_BLUEPRINTS = [
     color: 0xc75449,
     accent: 0xbec7cf,
     material: 0x5a6066,
+    // Iron Dominion — dwarven war-forge: dark iron stone, steel trim, blood-red roofs
+    palette: { stone: 0x515861, trim: 0x828a91, wood: 0x46342a, plaster: 0x6c7176, roof: 0x9a3f34, thatch: 0x6a5238, skin: 0xd7a070 },
     directive: "military",
     bonus: { gather: 0.98, workerCost: 1, unitHp: 1.18, unitDamage: 1.04 },
   },
@@ -188,6 +192,8 @@ const FACTION_BLUEPRINTS = [
     color: 0xe6b64c,
     accent: 0x52b8d8,
     material: 0x9d762f,
+    // Sunspire League — sun/desert arcanists: golden sandstone, pale-gold trim, amber roofs
+    palette: { stone: 0xd8b86a, trim: 0xf1e6bc, wood: 0x9c7636, plaster: 0xead9a2, roof: 0xdb9f3a, thatch: 0xc9a85c, skin: 0xe6b98a },
     directive: "tech",
     bonus: { gather: 1, workerCost: 1, unitHp: 0.96, unitDamage: 1.12, power: 1.22 },
   },
@@ -199,6 +205,8 @@ const FACTION_BLUEPRINTS = [
     color: 0x8d6ae3,
     accent: 0x59e0c9,
     material: 0x3f345d,
+    // Umbral Nexus — shadow/void cult: obsidian-purple stone, dusky trim, arcane-purple roofs
+    palette: { stone: 0x34314c, trim: 0x5b5680, wood: 0x2c2640, plaster: 0x433c60, roof: 0x6a4ea6, thatch: 0x4a3f6c, skin: 0xc8bce0 },
     directive: "defense",
     bonus: { gather: 0.96, workerCost: 1, unitHp: 0.96, unitDamage: 1.08, speed: 1.14 },
   },
@@ -600,6 +608,10 @@ window.__afkStrategyDebug = {
   })),
   ui: () => { updateUI(true); return { renown: document.querySelector("#renownReadout")?.textContent, bankedRenown, kills: game.stats.kills }; },
   attackDamage: (sourceType, targetKind, baseDamage) => attackDamage(sourceType, targetKind, baseDamage),
+  paletteProbe: () => factions.map((f) => {
+    const m = factionMaterials(f);
+    return { id: f.id, stone: m.stone.color.getHexString(), roof: m.roof.color.getHexString(), trim: m.trim.color.getHexString(), skin: (f.palette?.skin ?? 0xe8c08c).toString(16) };
+  }),
   skirmishTest: () => {
     // two opposing soldiers 4 apart in open field (map centre, far from any base), both ordered to attack:
     // with field engagement they should close and damage each other instead of marching past.
@@ -697,7 +709,7 @@ function createUnitTexture(type, faction) {
   const accent = colorHex(faction.accent);
   const dark = "#171c1f";
   const steel = "#cfd4d8";
-  const skin = "#e8c08c";
+  const skin = colorHex(faction.palette?.skin ?? 0xe8c08c); // per-nation skin tone (race flavour)
   const rect = (x, y, w, h, col) => { ctx.fillStyle = col; ctx.fillRect(x, y, w, h); };
   rect(9, 27, 14, 3, "rgba(0,0,0,0.30)"); // ground shadow
   if (type === "worker") {
@@ -1362,18 +1374,19 @@ function createTerrainDetails() {
 
 function factionMaterials(faction) {
   if (faction.materials) return faction.materials;
+  const p = faction.palette ?? {}; // per-nation cultural palette; falls back to the old shared neutrals
   faction.materials = {
     primary: new THREE.MeshStandardMaterial({ color: faction.material, roughness: 0.86, flatShading: true }),
     color: new THREE.MeshStandardMaterial({ color: faction.color, roughness: 0.78, flatShading: true }),
     accent: new THREE.MeshStandardMaterial({ color: faction.accent, roughness: 0.72, flatShading: true }),
     dark: new THREE.MeshStandardMaterial({ color: 0x1d2326, roughness: 0.9, flatShading: true }),
     glass: new THREE.MeshStandardMaterial({ color: faction.accent, roughness: 0.45, emissive: faction.accent, emissiveIntensity: 0.16, flatShading: true }),
-    stone: new THREE.MeshStandardMaterial({ color: 0x97968d, roughness: 0.94, flatShading: true }),
-    trim: new THREE.MeshStandardMaterial({ color: 0xc5bea3, roughness: 0.88, flatShading: true }),
-    wood: new THREE.MeshStandardMaterial({ color: 0x735033, roughness: 0.92, flatShading: true }),
-    plaster: new THREE.MeshStandardMaterial({ color: 0xbda982, roughness: 0.9, flatShading: true }),
-    roof: new THREE.MeshStandardMaterial({ color: faction.color, roughness: 0.82, flatShading: true }),
-    thatch: new THREE.MeshStandardMaterial({ color: 0xa48545, roughness: 0.96, flatShading: true }),
+    stone: new THREE.MeshStandardMaterial({ color: p.stone ?? 0x97968d, roughness: 0.94, flatShading: true }),
+    trim: new THREE.MeshStandardMaterial({ color: p.trim ?? 0xc5bea3, roughness: 0.88, flatShading: true }),
+    wood: new THREE.MeshStandardMaterial({ color: p.wood ?? 0x735033, roughness: 0.92, flatShading: true }),
+    plaster: new THREE.MeshStandardMaterial({ color: p.plaster ?? 0xbda982, roughness: 0.9, flatShading: true }),
+    roof: new THREE.MeshStandardMaterial({ color: p.roof ?? faction.color, roughness: 0.82, flatShading: true }),
+    thatch: new THREE.MeshStandardMaterial({ color: p.thatch ?? 0xa48545, roughness: 0.96, flatShading: true }),
   };
   return faction.materials;
 }
