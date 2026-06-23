@@ -666,6 +666,11 @@ window.__afkStrategyDebug = {
     }
     return leaf;
   },
+  terrainStats: () => {
+    let min = 1e9, max = -1e9;
+    for (let i = 0; i < heightField.length; i += 1) { const h = heightField[i]; if (h < min) min = h; if (h > max) max = h; }
+    return { min: Number(min.toFixed(2)), max: Number(max.toFixed(2)), range: Number((max - min).toFixed(2)) };
+  },
   mapProbe: () => ({
     seed: Number(MAP_SEED.toFixed(1)),
     heights: [[0, 20], [30, -30], [-40, 10], [55, 55]].map(([x, z]) => Number(sampleTerrainHeight(x, z).toFixed(2))),
@@ -1044,23 +1049,25 @@ function plateauWeight(x, z) {
 
 function terrainTopHeight(x, z) {
   if (isWater(x, z)) return -0.62;
+  // Terrain height feeds only visuals + entity placement (nav blocks on water only), so we can crank the
+  // relief for clearly visible hills without affecting pathfinding.
   const roll =
-    Math.sin((x + MAP_SEED) * 0.12) * 0.46 +
-    Math.cos((z - MAP_SEED) * 0.16) * 0.38 +
-    Math.sin((x * 0.07 + z * 0.13 + MAP_SEED) * 1.18) * 0.32;
+    Math.sin((x + MAP_SEED) * 0.12) * 0.62 +
+    Math.cos((z - MAP_SEED) * 0.16) * 0.5 +
+    Math.sin((x * 0.07 + z * 0.13 + MAP_SEED) * 1.18) * 0.42;
   const ridge =
-    Math.exp(-((x + 23) ** 2) / 320 - ((z - 4) ** 2) / 120) * 1.55 +
-    Math.exp(-((x - 18) ** 2) / 220 - ((z + 18) ** 2) / 260) * 1.35;
+    Math.exp(-((x + 23) ** 2) / 320 - ((z - 4) ** 2) / 120) * 2.3 +
+    Math.exp(-((x - 18) ** 2) / 220 - ((z + 18) ** 2) / 260) * 2.0;
   const features = TERRAIN_FEATURES.reduce((sum, feature) => {
     const dx = (x - feature.x) / feature.rx;
     const dz = (z - feature.z) / feature.rz;
-    return sum + Math.exp(-(dx * dx + dz * dz)) * feature.height;
+    return sum + Math.exp(-(dx * dx + dz * dz)) * feature.height * 2.05;
   }, 0);
   const edge = Math.max(Math.abs(x), Math.abs(z)) / HALF_MAP;
-  const edgeRise = edge > 0.76 ? (edge - 0.76) * 5.2 : 0;
-  const cut = mapNoise(Math.floor(x / 4), Math.floor(z / 4), 6) > 0.64 ? 0.34 : 0;
-  const raw = clamp(roll + ridge + features + edgeRise - cut, -0.14, 4.45);
-  const terraced = Math.round(raw / 0.34) * 0.34;
+  const edgeRise = edge > 0.76 ? (edge - 0.76) * 7.0 : 0;
+  const cut = mapNoise(Math.floor(x / 4), Math.floor(z / 4), 6) > 0.64 ? 0.4 : 0;
+  const raw = clamp(roll + ridge + features + edgeRise - cut, -0.16, 7.6);
+  const terraced = Math.round(raw / 0.42) * 0.42;
   return lerp(terraced, isShore(x, z) ? -0.12 : 0.1, plateauWeight(x, z));
 }
 
