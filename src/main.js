@@ -216,7 +216,7 @@ const TERRAIN_FEATURES = [
 const BUILDING_TYPES = {
   hq: {
     name: "HQ",
-    hp: 1300,
+    hp: 1150,
     radius: 2.9,
     supply: 18,
     weaponRange: 9,
@@ -487,6 +487,20 @@ window.__afkStrategyDebug = {
       }
     }
     return { attackUnits: atk.length, withPath, pending, withinBaseRange: near, minDistToObj: Math.round(minD), avgDistToObj: Math.round(sumD / Math.max(1, atk.length)) };
+  },
+  combatProbe: () => {
+    let army = 0;
+    let inContact = 0;
+    let inField = 0;
+    for (const u of units) {
+      if (!u.alive || u.role !== "army") continue;
+      army += 1;
+      if (nearestEnemyEntity(u.position, u.faction, u.range + 5)) inContact += 1;
+      let nearBase = false;
+      for (const f of factions) if (f.hq?.alive && u.position.distanceToSquared(f.hq.position) < 28 * 28) { nearBase = true; break; }
+      if (!nearBase) inField += 1;
+    }
+    return { army, inContact, inField };
   },
   factions: () => factions.map((f) => ({
     id: f.id,
@@ -2018,15 +2032,15 @@ function updateCombatUnit(unit, dt) {
     else navigateTo(unit, unit.order.point, dt, 0.9);
     return;
   }
-  // Guard: hold near home, fight local intruders in place, otherwise return to the rally point.
+  // Guard: sally out to meet nearby enemies (big, visible defensive battles), else hold the rally point.
   if (unit.order.type === "guard") {
-    const threat = nearestEnemyEntity(unit.position, unit.faction, 13);
+    const threat = nearestEnemyEntity(unit.position, unit.faction, 24);
     if (threat) fireOrAdvance(unit, threat, dt);
     else navigateTo(unit, unit.faction.rallyPoint ?? unit.faction.hq.position, dt, 2.4);
     return;
   }
-  // Attack order = assault on an objective base: march straight in (ignoring field skirmishers),
-  // then clear it building-by-building once in range so the strike actually reaches and razes the HQ.
+  // Attack order = drive on an objective base and clear it building-by-building once in range, so the
+  // strike concentrates fire and actually razes the HQ (engaging field skirmishers en route stalls it).
   if (!unit.order.objective || !unit.order.objective.alive) unit.order.objective = enemyHqTarget(unit.faction);
   const obj = unit.order.objective;
   if (!obj) {
@@ -2291,10 +2305,10 @@ function thinkFaction(faction, dt) {
   const ready = armyUnits(faction);
   const waveMin = Math.max(6, Math.floor(targetArmy * 0.4));
   const escalation = clamp(game.time / 330, 0, 1); // total war ramps up over ~5.5 min so games conclude
-  if (faction.waveTimer <= 0 && ready.length >= waveMin && Math.random() < directive.aggression + 0.15 + escalation * 0.3) {
+  if (faction.waveTimer <= 0 && ready.length >= waveMin && Math.random() < directive.aggression + 0.25 + escalation * 0.3) {
     const target = enemyHqTarget(faction);
     if (target) {
-      const count = Math.max(waveMin, Math.floor(ready.length * lerp(0.6, 0.95, escalation))); // commit more as the war drags on
+      const count = Math.max(waveMin, Math.floor(ready.length * lerp(0.6, 0.95, escalation))); // commit a strike force, keep a home garrison early
       for (const unit of ready.slice(0, count)) unit.order = { type: "attack", target, objective: target };
       faction.waveTimer = lerp(30, 12, directive.aggression) * (1 - escalation * 0.45) + rand(0, 6);
       logEvent(`${faction.shortName} launches a strike at ${target.faction.shortName}.`);
