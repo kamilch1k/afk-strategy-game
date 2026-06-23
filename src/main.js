@@ -93,8 +93,9 @@ const menuWins = document.querySelector("#menuWins");
 const menuRenown = document.querySelector("#menuRenown");
 const offlineNote = document.querySelector("#offlineNote");
 
-const MAP_SIZE = 200;
+const MAP_SIZE = 240;
 const HALF_MAP = MAP_SIZE / 2;
+const MAP_SCALE = HALF_MAP / 100; // layout was tuned for a 200-wide map; scale fixed coords (starts, nodes) to match
 const TERRAIN_TEXTURE_SIZE = 8;
 const TERRAIN_BASE_Y = -1.2;
 const SKY_RADIUS = 820;
@@ -161,7 +162,7 @@ const FACTION_BLUEPRINTS = [
     id: "verdant",
     name: "Verdant Concord",
     shortName: "Verdant",
-    start: new THREE.Vector3(-66, 0, 58),
+    start: new THREE.Vector3(-66 * MAP_SCALE, 0, 58 * MAP_SCALE),
     color: 0x78c957,
     accent: 0xf0d46a,
     material: 0x2f5d3f,
@@ -176,7 +177,7 @@ const FACTION_BLUEPRINTS = [
     id: "iron",
     name: "Iron Dominion",
     shortName: "Iron",
-    start: new THREE.Vector3(66, 0, -58),
+    start: new THREE.Vector3(66 * MAP_SCALE, 0, -58 * MAP_SCALE),
     color: 0xc75449,
     accent: 0xbec7cf,
     material: 0x5a6066,
@@ -190,7 +191,7 @@ const FACTION_BLUEPRINTS = [
     id: "sunspire",
     name: "Sunspire League",
     shortName: "Sunspire",
-    start: new THREE.Vector3(66, 0, 58),
+    start: new THREE.Vector3(66 * MAP_SCALE, 0, 58 * MAP_SCALE),
     color: 0xe6b64c,
     accent: 0x52b8d8,
     material: 0x9d762f,
@@ -204,7 +205,7 @@ const FACTION_BLUEPRINTS = [
     id: "umbral",
     name: "Umbral Nexus",
     shortName: "Umbral",
-    start: new THREE.Vector3(-66, 0, -58),
+    start: new THREE.Vector3(-66 * MAP_SCALE, 0, -58 * MAP_SCALE),
     color: 0x8d6ae3,
     accent: 0x59e0c9,
     material: 0x3f345d,
@@ -672,6 +673,9 @@ window.__afkStrategyDebug = {
     return { min: Number(min.toFixed(2)), max: Number(max.toFixed(2)), range: Number((max - min).toFixed(2)) };
   },
   mapProbe: () => ({
+    size: MAP_SIZE,
+    heightCells: heightField.length,
+    resourceNodes: resourceNodes.length,
     seed: Number(MAP_SEED.toFixed(1)),
     heights: [[0, 20], [30, -30], [-40, 10], [55, 55]].map(([x, z]) => Number(sampleTerrainHeight(x, z).toFixed(2))),
     terrainChildren: terrainGroup.children.length,
@@ -1894,7 +1898,7 @@ function createResourceFields() {
     ["ore", 54, 20], ["food", -54, -20], ["power", 22, -58], ["food", -22, 58],
   ];
   for (const [type, x, z] of neutralNodes) {
-    const [lx, lz] = placeOnLand(x + rand(-3, 3), z + rand(-3, 3));
+    const [lx, lz] = placeOnLand(x * MAP_SCALE + rand(-3, 3), z * MAP_SCALE + rand(-3, 3));
     createResourceNode(type, lx, lz, RESOURCE_TYPES[type].amount * 1.25);
   }
 }
