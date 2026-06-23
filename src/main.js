@@ -149,11 +149,11 @@ const removeFrom = (array, item) => {
 };
 
 const DIRECTIVES = {
-  balanced: { label: "Balanced doctrine", workers: 14, army: 12, defense: 1, tech: 1, aggression: 0.58 },
-  economy: { label: "Economy boom", workers: 24, army: 8, defense: 1, tech: 1, aggression: 0.32 },
-  military: { label: "Military pressure", workers: 15, army: 26, defense: 1, tech: 1, aggression: 0.92 },
-  tech: { label: "Tech climb", workers: 18, army: 14, defense: 1, tech: 3, aggression: 0.5 },
-  defense: { label: "Fortified hold", workers: 18, army: 16, defense: 4, tech: 1, aggression: 0.28 },
+  balanced: { label: "Balanced doctrine", workers: 14, army: 16, defense: 1, tech: 1, aggression: 0.6 },
+  economy: { label: "Economy boom", workers: 24, army: 10, defense: 1, tech: 1, aggression: 0.34 },
+  military: { label: "Military pressure", workers: 15, army: 21, defense: 1, tech: 1, aggression: 0.9 },
+  tech: { label: "Tech climb", workers: 18, army: 16, defense: 1, tech: 3, aggression: 0.52 },
+  defense: { label: "Fortified hold", workers: 18, army: 17, defense: 4, tech: 1, aggression: 0.3 },
 };
 
 const FACTION_BLUEPRINTS = [
@@ -184,7 +184,7 @@ const FACTION_BLUEPRINTS = [
     palette: { stone: 0x515861, trim: 0x828a91, wood: 0x46342a, plaster: 0x6c7176, roof: 0x9a3f34, thatch: 0x6a5238, skin: 0xd7a070 },
     style: "fort", // flat battlemented fortress roofs
     directive: "military",
-    bonus: { gather: 0.98, workerCost: 1, unitHp: 1.18, unitDamage: 1.04 },
+    bonus: { gather: 0.94, workerCost: 1, unitHp: 1.1, unitDamage: 1.04 },
   },
   {
     id: "sunspire",
@@ -198,7 +198,7 @@ const FACTION_BLUEPRINTS = [
     palette: { stone: 0xd8b86a, trim: 0xf1e6bc, wood: 0x9c7636, plaster: 0xead9a2, roof: 0xdb9f3a, thatch: 0xc9a85c, skin: 0xe6b98a },
     style: "dome", // gold onion domes
     directive: "tech",
-    bonus: { gather: 1, workerCost: 1, unitHp: 0.96, unitDamage: 1.12, power: 1.22 },
+    bonus: { gather: 1, workerCost: 1, unitHp: 1.0, unitDamage: 1.12, power: 1.22 },
   },
   {
     id: "umbral",
@@ -212,7 +212,7 @@ const FACTION_BLUEPRINTS = [
     palette: { stone: 0x34314c, trim: 0x5b5680, wood: 0x2c2640, plaster: 0x433c60, roof: 0x6a4ea6, thatch: 0x4a3f6c, skin: 0xc8bce0 },
     style: "spire", // tall arcane spires
     directive: "defense",
-    bonus: { gather: 0.96, workerCost: 1, unitHp: 0.96, unitDamage: 1.08, speed: 1.14 },
+    bonus: { gather: 0.96, workerCost: 1, unitHp: 0.96, unitDamage: 1.08, speed: 1.08 },
   },
 ];
 
@@ -1888,6 +1888,7 @@ function resetWorld() {
   combatFocus.time = -999; // forget last match's battle location (else the ping/Follow point at stale coords)
   combatFocus.x = 0;
   combatFocus.z = 0;
+  game.lastManualDoctrineAt = -999; // each match starts in AFK-adapt mode until the human steers
   game.stats.kills = 0;
   game.stats.losses = 0;
   game.stats.buildingsBuilt = 0;
@@ -2603,9 +2604,16 @@ function thinkFaction(faction, dt) {
   faction.waveTimer -= dt;
   if (faction.nextThink > 0) return;
   faction.nextThink = THINK_INTERVAL + rand(-0.5, 0.65);
-  if (!faction.player) faction.directive = chooseAiDirective(faction);
-  const directive = DIRECTIVES[faction.player ? game.directive : faction.directive];
-  faction.directive = faction.player ? game.directive : faction.directive;
+  if (faction.player) {
+    // In pure AFK the player nation adapts like the AI (presses when dominant) so it isn't doomed to never
+    // close out; manual doctrine input within the last 60s overrides that, keeping the human in control.
+    faction.baseDirective = game.directive;
+    const manualRecent = game.time - (game.lastManualDoctrineAt ?? -999) < 60;
+    faction.directive = manualRecent ? game.directive : chooseAiDirective(faction);
+  } else {
+    faction.directive = chooseAiDirective(faction);
+  }
+  const directive = DIRECTIVES[faction.directive];
   faction.tech = faction.structures.filter((structure) => structure.alive && structure.type === "academy").length;
   if (faction.tech > (faction.techAnnounced ?? 0)) {
     faction.techAnnounced = faction.tech;
@@ -2988,8 +2996,9 @@ function cancelSpectate() {
   if (autoSpectate) setSpectate(false);
 }
 
-function setDirective(id) {
+function setDirective(id, manual = false) {
   game.directive = id;
+  if (manual) game.lastManualDoctrineAt = game.time; // human override; AFK adaptation pauses for 60s
   if (playerFaction) playerFaction.directive = id;
   directiveReadout.textContent = DIRECTIVES[id].label;
   for (const button of directiveButtons.querySelectorAll("button")) {
@@ -3289,7 +3298,7 @@ function bindEvents() {
       event.preventDefault();
       togglePause();
     } else if (game.started && /^(Digit|Numpad)[1-5]$/.test(event.code)) {
-      setDirective(["balanced", "economy", "military", "tech", "defense"][Number(event.code.slice(-1)) - 1]); // doctrine hotkeys
+      setDirective(["balanced", "economy", "military", "tech", "defense"][Number(event.code.slice(-1)) - 1], true); // doctrine hotkeys
     }
   });
   window.addEventListener("keyup", (event) => keys.delete(event.code));
@@ -3323,7 +3332,7 @@ function bindEvents() {
   exitToMenuButton.addEventListener("click", exitToMenu);
   directiveButtons.addEventListener("click", (event) => {
     const button = event.target.closest("[data-directive]");
-    if (button) setDirective(button.dataset.directive);
+    if (button) setDirective(button.dataset.directive, true);
   });
   document.querySelectorAll("[data-build]").forEach((button) => {
     button.addEventListener("click", () => requestBuild(playerFaction, button.dataset.build));
