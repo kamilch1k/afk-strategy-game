@@ -2385,6 +2385,14 @@ function thinkFaction(faction, dt) {
   const directive = DIRECTIVES[faction.player ? game.directive : faction.directive];
   faction.directive = faction.player ? game.directive : faction.directive;
   faction.tech = faction.structures.filter((structure) => structure.alive && structure.type === "academy").length;
+  if (faction.tech > (faction.techAnnounced ?? 0)) {
+    faction.techAnnounced = faction.tech;
+    logEvent(
+      faction.tech === 1
+        ? `${faction.shortName} unlocks Tier 1 — Siege Walkers.`
+        : `${faction.shortName} advances to Tier ${faction.tech}.`,
+    );
+  }
 
   if (unitCount(faction, "worker") < directive.workers) requestTrain(faction, "worker");
   if (structureCount(faction, "refinery") < Math.ceil(directive.workers / 7)) requestBuild(faction, "refinery");
