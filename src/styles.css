@@ -821,3 +821,14 @@ body {
 .civ-row.out {
   opacity: 0.42;
 }
+
+.menu-offline {
+  margin: 12px 0 0;
+  color: #f0d77e;
+  font-size: 0.92rem;
+  font-weight: 800;
+}
+
+.menu-offline:empty {
+  display: none;
+}

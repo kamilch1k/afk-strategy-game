@@ -86,6 +86,7 @@ const menuBestTime = document.querySelector("#menuBestTime");
 const menuBestKills = document.querySelector("#menuBestKills");
 const menuWins = document.querySelector("#menuWins");
 const menuRenown = document.querySelector("#menuRenown");
+const offlineNote = document.querySelector("#offlineNote");
 
 const MAP_SIZE = 200;
 const HALF_MAP = MAP_SIZE / 2;
@@ -113,6 +114,8 @@ const RESOURCE_LOW_WATER = 85;
 const THINK_INTERVAL = 2.1;
 const SUDDEN_DEATH_START = 480; // seconds — after this every HQ decays so a match can't stalemate forever
 const RESTART_DELAY = 7; // seconds the victory banner shows before the next skirmish auto-starts (the AFK loop)
+const OFFLINE_RATE = 0.05; // Renown earned per second while away (idle accrual)
+const OFFLINE_CAP = 8 * 3600; // offline progress caps at 8 hours
 const UI_INTERVAL = 0.18;
 
 const tmpVec = new THREE.Vector3();
@@ -444,6 +447,7 @@ window.__afkStrategyDebug = {
   },
   drawMinimap: () => drawMinimap(),
   ui: () => updateUI(true),
+  applyOffline: () => { applyOfflineProgress(); updateMenuStats(); return { offlineEarned: game.offlineEarned, renown: loadStats().renown }; },
   renownInfo: () => {
     const ps = units.find((u) => u.alive && u.faction.player && u.role === "army");
     const as = ps ? units.find((u) => u.alive && !u.faction.player && u.role === "army" && u.type === ps.type) : null;
@@ -2818,6 +2822,37 @@ function saveStats(stats) {
   localStorage.setItem(SAVE_KEY, JSON.stringify(stats));
 }
 
+function applyOfflineProgress() {
+  const stats = loadStats();
+  game.offlineEarned = 0;
+  if (stats.lastSeen) {
+    const elapsed = Math.max(0, (Date.now() - stats.lastSeen) / 1000);
+    if (elapsed > 60) {
+      const earned = Math.floor(Math.min(elapsed, OFFLINE_CAP) * OFFLINE_RATE);
+      if (earned > 0) {
+        stats.renown = (stats.renown ?? 0) + earned;
+        game.offlineEarned = earned;
+      }
+    }
+  }
+  stats.lastSeen = Date.now();
+  saveStats(stats);
+}
+
+function touchLastSeen() {
+  const stats = loadStats();
+  stats.lastSeen = Date.now();
+  saveStats(stats);
+}
+
+function startLastSeenTracking() {
+  setInterval(touchLastSeen, 10000);
+  window.addEventListener("beforeunload", touchLastSeen);
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden) touchLastSeen();
+  });
+}
+
 function updateMenuStats() {
   const stats = loadStats();
   menuSessions.textContent = stats.sessions ?? 0;
@@ -2826,6 +2861,7 @@ function updateMenuStats() {
   menuWins.textContent = stats.wins ?? 0;
   const renown = stats.renown ?? 0;
   if (menuRenown) menuRenown.textContent = `${renown} · +${Math.round(Math.min(0.5, renown / 1000) * 100)}%`;
+  if (offlineNote) offlineNote.textContent = game.offlineEarned > 0 ? `Your lands earned ${game.offlineEarned} Renown while you were away.` : "";
 }
 
 function setMenuOpen(open) {
@@ -2846,6 +2882,7 @@ function setPaused(paused, showPauseMenu = false) {
 
 function startGame() {
   renownBonus = Math.min(0.5, (loadStats().renown ?? 0) / 1000); // up to +50% at 1000 Renown
+  game.offlineEarned = 0; // consumed once shown on the menu
   resetWorld();
   game.started = true;
   game.paused = false;
@@ -3060,6 +3097,8 @@ function init() {
   mainMenu.classList.remove("hidden");
   setMenuOpen(true);
   bindEvents();
+  applyOfflineProgress();
+  startLastSeenTracking();
   updateMenuStats();
   updateUI(true);
   animate();
