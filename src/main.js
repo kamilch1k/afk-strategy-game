@@ -110,6 +110,7 @@ const NAV_DIRECT_RANGE = 11; // closer than this, units steer straight; farther,
 const PATH_BUDGET = 6; // max A* solves processed per frame (the rest wait in a queue)
 const RESOURCE_LOW_WATER = 85;
 const THINK_INTERVAL = 2.1;
+const SUDDEN_DEATH_START = 480; // seconds — after this every HQ decays so a match can't stalemate forever
 const UI_INTERVAL = 0.18;
 
 const tmpVec = new THREE.Vector3();
@@ -1650,6 +1651,7 @@ function resetWorld() {
   game.selected = [];
   game.time = 0;
   game.winner = null;
+  game.suddenDeathOn = false;
   game.stats.kills = 0;
   game.stats.losses = 0;
   game.stats.buildingsBuilt = 0;
@@ -2963,6 +2965,23 @@ function drawMinimap() {
   ctx.strokeRect((cameraState.target.x - halfW + HALF_MAP) * sx, (cameraState.target.z - halfH + HALF_MAP) * sz, halfW * 2 * sx, halfH * 2 * sz);
 }
 
+function updateSuddenDeath(dt) {
+  if (game.time < SUDDEN_DEATH_START) return;
+  if (!game.suddenDeathOn) {
+    game.suddenDeathOn = true;
+    showMessage("SUDDEN DEATH — the strongest throne will endure");
+    logEvent("Sudden death: the lands turn hostile — weaker HQs crumble fastest.");
+  }
+  const base = 7 + (game.time - SUDDEN_DEATH_START) * 0.1; // hp/sec, accelerating, so matches always conclude
+  let maxArmy = 1;
+  for (const faction of factions) if (!faction.defeated) maxArmy = Math.max(maxArmy, armyUnits(faction).length);
+  for (const faction of factions) {
+    if (faction.defeated || !faction.hq?.alive) continue;
+    const weakness = 1 - armyUnits(faction).length / maxArmy; // 0 for the army leader, ->1 for the weakest
+    damageEntity(faction.hq, base * (1 + 2 * weakness) * dt, null); // weaker armies decay up to 3x faster -> the strongest survives last
+  }
+}
+
 function stepSimulation(dt) {
   game.time += dt;
   updateKeyboardCamera(dt);
@@ -2973,6 +2992,7 @@ function stepSimulation(dt) {
   updateUnits(dt);
   updateProjectiles(dt);
   updateEffects(dt);
+  updateSuddenDeath(dt);
   checkWinner();
   updateMessage();
 }
