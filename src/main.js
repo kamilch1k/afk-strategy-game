@@ -612,6 +612,12 @@ window.__afkStrategyDebug = {
   })),
   ui: () => { updateUI(true); return { renown: document.querySelector("#renownReadout")?.textContent, bankedRenown, kills: game.stats.kills }; },
   attackDamage: (sourceType, targetKind, baseDamage) => attackDamage(sourceType, targetKind, baseDamage),
+  barracksProbe: () => factions.map((f) => {
+    const g = createStructureModel("barracks", f); // throwaway model just to count meshes
+    let meshes = 0;
+    g.traverse((o) => { if (o.isMesh) meshes += 1; });
+    return { id: f.id, style: f.style, meshes };
+  }),
   hqProbe: () => factions.map((f) => {
     const hq = f.structures.find((s) => s.alive && s.type === "hq");
     let meshes = 0;
@@ -1560,6 +1566,22 @@ function addHqCrown(group, mats, style) {
   }
 }
 
+// Per-nation barracks roof, matching the HQ crown so a whole base reads as one culture.
+function addBarracksRoof(group, mats, style) {
+  if (style === "fort") {
+    addBlock(group, mats.stone, 0, 1.18, 0, 3.7, 0.5, 2.7); // flat battlement roof
+    addCrenels(group, mats.stone, 1.52, 1.8, 1.3, 0.34);
+  } else if (style === "dome") {
+    addBlock(group, mats.roof, 0, 1.16, 0, 3.4, 0.42, 2.5);
+    addBlock(group, mats.roof, 0, 1.52, 0, 2.4, 0.42, 1.7);
+    addBlock(group, mats.accent, 0, 1.86, 0, 1.3, 0.42, 0.9); // dome cap
+  } else if (style === "spire") {
+    addRoofPrism(group, mats.roof, 0, 1.1, 0, 3.9, 1.7, 2.8); // tall steep roof
+  } else {
+    addRoofPrism(group, mats.roof, 0, 1.1, 0, 3.9, 0.95, 2.8); // pitched (default)
+  }
+}
+
 function createStructureModel(type, faction) {
   const mats = factionMaterials(faction);
   const group = new THREE.Group();
@@ -1594,7 +1616,7 @@ function createStructureModel(type, faction) {
   } else if (type === "barracks") {
     addBlock(group, mats.plaster, 0, 0, 0, 3.5, 1.1, 2.4);
     addBlock(group, mats.wood, 0, 0, 0, 3.7, 0.22, 2.6); // sill
-    addRoofPrism(group, mats.roof, 0, 1.1, 0, 3.9, 0.95, 2.8);
+    addBarracksRoof(group, mats, faction.style ?? "peaked"); // per-nation roofline
     addBlock(group, mats.dark, 0, 0.5, 1.24, 1.0, 1.0, 0.1); // doors
     addBlock(group, mats.wood, 0, 0.5, 1.28, 0.08, 1.0, 0.06);
     addBlock(group, mats.glass, -1.1, 0.62, 1.22, 0.4, 0.4, 0.08);
