@@ -504,6 +504,7 @@ window.__afkStrategyDebug = {
     paused: game.paused,
     gameSpeed,
     autoSpectate,
+    suddenDeath: game.suddenDeathOn,
     units: units.filter((u) => u.alive).length,
     withPath: units.filter((u) => u.alive && u.path).length,
     pathQueue: pathQueue.length,
@@ -588,6 +589,7 @@ window.__afkStrategyDebug = {
     units: f.units.filter((u) => u.alive).length,
     army: f.units.filter((u) => u.alive && u.role === "army").length,
     tech: f.tech,
+    directive: f.directive,
     attacking: f.units.filter((u) => u.alive && u.order?.type === "attack").length,
     structures: f.structures.filter((s) => s.alive).length,
     hq: f.hq?.alive ? Math.round(f.hq.hp) : 0,
@@ -1719,6 +1721,7 @@ function createFaction(blueprint) {
     structures: [],
     defeated: false,
     tech: 0,
+    baseDirective: blueprint.directive, // natural doctrine; AI may temporarily adapt away from it
     nextThink: rand(0.2, 1.8),
     waveTimer: rand(10, 18),
     lastAttackAt: 0,
@@ -2404,12 +2407,26 @@ function requestTrain(faction, type) {
   return unit;
 }
 
+function chooseAiDirective(faction) {
+  // a dominant army presses the advantage to close the match out; otherwise hold its natural doctrine.
+  // (Only the clear leader turns aggressive, so this accelerates resolution without causing mutual-kill draws.)
+  const myArmy = armyUnits(faction).length;
+  let topEnemy = 0;
+  for (const other of factions) {
+    if (other === faction || other.defeated) continue;
+    topEnemy = Math.max(topEnemy, armyUnits(other).length);
+  }
+  if (game.time > 90 && myArmy >= 7 && myArmy >= topEnemy * 1.25 && faction.baseDirective !== "military") return "military";
+  return faction.baseDirective ?? faction.directive;
+}
+
 function thinkFaction(faction, dt) {
   if (faction.defeated) return;
   faction.nextThink -= dt;
   faction.waveTimer -= dt;
   if (faction.nextThink > 0) return;
   faction.nextThink = THINK_INTERVAL + rand(-0.5, 0.65);
+  if (!faction.player) faction.directive = chooseAiDirective(faction);
   const directive = DIRECTIVES[faction.player ? game.directive : faction.directive];
   faction.directive = faction.player ? game.directive : faction.directive;
   faction.tech = faction.structures.filter((structure) => structure.alive && structure.type === "academy").length;
