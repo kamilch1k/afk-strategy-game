@@ -488,6 +488,20 @@ window.__afkStrategyDebug = {
     }
     return { attackUnits: atk.length, withPath, pending, withinBaseRange: near, minDistToObj: Math.round(minD), avgDistToObj: Math.round(sumD / Math.max(1, atk.length)) };
   },
+  vetProbe: () => {
+    const army = units.filter((u) => u.alive && u.role === "army");
+    let maxRank = 0;
+    let veterans = 0;
+    let sample = null;
+    for (const u of army) {
+      if (u.rank > maxRank) maxRank = u.rank;
+      if (u.rank > 0) {
+        veterans += 1;
+        if (!sample) sample = { type: u.type, rank: u.rank, kills: u.kills, dmg: Number(u.damage.toFixed(1)), baseDmg: Number(u.baseDamage.toFixed(1)), maxHp: u.maxHp, baseMaxHp: u.baseMaxHp };
+      }
+    }
+    return { army: army.length, veterans, maxRank, sample };
+  },
   combatProbe: () => {
     let army = 0;
     let inContact = 0;
@@ -1759,6 +1773,10 @@ function spawnUnit(type, faction, x, z, free = false) {
     cargo: 0,
     harvestTimer: 0,
     frameSeed: Math.random() * 100,
+    baseDamage: damage,
+    baseMaxHp: hp,
+    kills: 0,
+    rank: 0,
     path: null,
     pathIndex: 0,
     pathGoal: null,
@@ -2085,7 +2103,7 @@ function updateProjectiles(dt) {
     tmpVec.sub(projectile.mesh.position);
     if (tmpVec.lengthSq() < 0.22) {
       projectile.alive = false;
-      damageEntity(projectile.target, projectile.damage, projectile.faction);
+      damageEntity(projectile.target, projectile.damage, projectile.faction, projectile.source);
       if (projectile.splash > 0) {
         const tp = projectile.target.position;
         const ccx = Math.floor(tp.x / SPATIAL_CELL);
@@ -2097,7 +2115,7 @@ function updateProjectiles(dt) {
             if (!bucket) continue;
             for (const unit of bucket) {
               if (!unit.alive || unit.faction === projectile.faction || unit === projectile.target) continue;
-              if (unit.position.distanceToSquared(tp) < splashSq) damageEntity(unit, projectile.damage * 0.36, projectile.faction);
+              if (unit.position.distanceToSquared(tp) < splashSq) damageEntity(unit, projectile.damage * 0.36, projectile.faction, projectile.source);
             }
           }
         }
@@ -2148,7 +2166,19 @@ function updateEffects(dt) {
   }
 }
 
-function damageEntity(entity, amount, sourceFaction) {
+function addKill(unit) {
+  unit.kills += 1;
+  const rank = Math.min(3, Math.floor(unit.kills / 3));
+  if (rank <= unit.rank) return;
+  unit.rank = rank; // promote: stronger and visibly larger
+  unit.damage = unit.baseDamage * (1 + 0.18 * rank);
+  const newMax = Math.round(unit.baseMaxHp * (1 + 0.15 * rank));
+  unit.hp = Math.min(newMax, unit.hp + (newMax - unit.maxHp)); // heal by the maxHp gained on promotion
+  unit.maxHp = newMax;
+  unit.sprite.scale.multiplyScalar(1.06);
+}
+
+function damageEntity(entity, amount, sourceFaction, sourceUnit = null) {
   if (!entity?.alive) return;
   entity.hp -= amount;
   if (entity.healthBar) updateHealthBar(entity);
@@ -2177,6 +2207,7 @@ function damageEntity(entity, amount, sourceFaction) {
     }
     if (sourceFaction?.player && entity.faction !== sourceFaction) game.stats.kills += 3;
   }
+  if (sourceUnit && sourceUnit.kind === "unit" && sourceUnit.alive) addKill(sourceUnit); // veterancy: credit the killer
   createHit(entity.position, sourceFaction?.accent ?? 0xffffff);
   if (game.selected.length && game.selected.includes(entity)) {
     removeFrom(game.selected, entity);
