@@ -2001,6 +2001,20 @@ function nearestEnemyEntity(from, faction, maxDistance = Infinity) {
   return best;
 }
 
+function nearestEnemyStructure(from, faction, maxDistance = Infinity) {
+  let best = null;
+  let bestScore = maxDistance * maxDistance;
+  for (const structure of structures) {
+    if (!structure.alive || structure.faction === faction) continue;
+    const score = from.distanceToSquared(structure.position) - (structure.type === "hq" ? 16 : 0);
+    if (score < bestScore) {
+      bestScore = score;
+      best = structure;
+    }
+  }
+  return best;
+}
+
 function enemyHqTarget(faction) {
   let best = null;
   let bestScore = Infinity;
@@ -2172,8 +2186,11 @@ function updateCombatUnit(unit, dt) {
     unit.order = { type: "guard", target: null, point: unit.faction.rallyPoint.clone() };
     return;
   }
-  const atBase = unit.position.distanceToSquared(obj.position) < 18 * 18;
-  fireOrAdvance(unit, atBase ? nearestEnemyEntity(unit.position, unit.faction, 18) ?? obj : obj, dt);
+  // Once at the base, raze it building-by-building (nearest structure first: turrets/production, HQ last) so
+  // the assault actually levels the enemy instead of brawling the defender screen forever. The defenders are on
+  // guard orders and shoot the besiegers, so the perimeter stays a live fight while the base comes down.
+  const atBase = unit.position.distanceToSquared(obj.position) < 22 * 22;
+  fireOrAdvance(unit, atBase ? nearestEnemyStructure(unit.position, unit.faction, 26) ?? obj : obj, dt);
 }
 
 function shotMaterial(faction) {
