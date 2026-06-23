@@ -599,6 +599,7 @@ window.__afkStrategyDebug = {
     ore: Math.floor(f.resources.ore),
   })),
   ui: () => { updateUI(true); return { renown: document.querySelector("#renownReadout")?.textContent, bankedRenown, kills: game.stats.kills }; },
+  attackDamage: (sourceType, targetKind, baseDamage) => attackDamage(sourceType, targetKind, baseDamage),
   combatFocus: () => ({
     x: Number(combatFocus.x.toFixed(2)),
     z: Number(combatFocus.z.toFixed(2)),
@@ -2131,6 +2132,11 @@ function updateWorker(unit, dt) {
   }
 }
 
+const SIEGE_STRUCTURE_BONUS = 2.2; // Siege Walkers raze buildings; they're the way to break a defended base
+function attackDamage(sourceType, targetKind, baseDamage) {
+  return sourceType === "siege" && targetKind === "structure" ? baseDamage * SIEGE_STRUCTURE_BONUS : baseDamage;
+}
+
 function fireOrAdvance(unit, target, dt) {
   const stop = unit.range + (target.radius ?? 0.5) + 0.08;
   const distance = navigateTo(unit, target.position, dt, stop, target);
@@ -2204,7 +2210,7 @@ function updateProjectiles(dt) {
     tmpVec.sub(projectile.mesh.position);
     if (tmpVec.lengthSq() < 0.22) {
       projectile.alive = false;
-      damageEntity(projectile.target, projectile.damage, projectile.faction, projectile.source);
+      damageEntity(projectile.target, attackDamage(projectile.source?.type, projectile.target.kind, projectile.damage), projectile.faction, projectile.source);
       if (projectile.splash > 0) {
         const tp = projectile.target.position;
         const ccx = Math.floor(tp.x / SPATIAL_CELL);
