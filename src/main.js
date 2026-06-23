@@ -539,6 +539,14 @@ window.__afkStrategyDebug = {
     }
     return { army: army.length, veterans, maxRank, sample };
   },
+  regenTest: () => {
+    const f = playerFaction;
+    const u = spawnUnit("soldier", f, f.start.x, f.start.z, true);
+    u.hp = 10;
+    const before = u.hp;
+    for (let i = 0; i < 50; i += 1) stepSimulation(0.05); // 2.5s
+    return { maxHp: u.maxHp, hpBefore: before, hpAfter: Number(u.hp.toFixed(1)), healed: Number((u.hp - before).toFixed(1)) };
+  },
   unitTypes: () => {
     const counts = {};
     let archerRange = null;
@@ -2279,6 +2287,9 @@ function updateUnits(dt) {
     unit.velocity.multiplyScalar(0.72);
     if (unit.role === "worker") updateWorker(unit, dt);
     else updateCombatUnit(unit, dt);
+    if (unit.hp < unit.maxHp && !nearestEnemyEntity(unit.position, unit.faction, 12)) {
+      unit.hp = Math.min(unit.maxHp, unit.hp + unit.maxHp * 0.04 * dt); // out-of-combat regen (~25s to full)
+    }
     unit.sprite.material.rotation = Math.sin(game.time * 4 + unit.frameSeed) * 0.02;
   }
   for (let i = units.length - 1; i >= 0; i -= 1) {
