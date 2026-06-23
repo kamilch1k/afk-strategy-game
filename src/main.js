@@ -418,7 +418,15 @@ let playerFaction = null;
 let skySphere = null;
 let hoverEntity = null;
 let uiTimer = 0;
-let renownBonus = 0; // permanent buff to the player's units, scaled by saved Renown (the incremental hook)
+let playerDmgMul = 1; // player-unit multipliers from purchased Renown upgrades (recomputed each game)
+let playerHpMul = 1;
+let playerEcoMul = 1;
+const UPGRADES = [
+  { id: "dmg", name: "Forged Blades", max: 8 },
+  { id: "hp", name: "Tempered Plate", max: 8 },
+  { id: "eco", name: "War Economy", max: 8 },
+];
+const upgradeCost = (level) => 80 * (level + 1); // escalating Renown cost per level
 
 const game = {
   started: false,
@@ -466,7 +474,7 @@ window.__afkStrategyDebug = {
   renownInfo: () => {
     const ps = units.find((u) => u.alive && u.faction.player && u.role === "army");
     const as = ps ? units.find((u) => u.alive && !u.faction.player && u.role === "army" && u.type === ps.type) : null;
-    return { renownBonus: Number(renownBonus.toFixed(3)), saved: loadStats().renown ?? 0, playerType: ps?.type, playerBaseDmg: ps ? Number(ps.baseDamage.toFixed(2)) : null, aiBaseDmg: as ? Number(as.baseDamage.toFixed(2)) : null };
+    return { playerDmgMul, playerHpMul, playerEcoMul, upgrades: loadStats().upgrades, renown: loadStats().renown ?? 0, playerType: ps?.type, playerBaseDmg: ps ? Number(ps.baseDamage.toFixed(2)) : null, aiBaseDmg: as ? Number(as.baseDamage.toFixed(2)) : null };
   },
   look: (x, z, dist, yaw, pitch) => {
     cameraState.target.set(x, CAMERA_LOOK_HEIGHT, z);
@@ -1789,9 +1797,8 @@ function trainUnit(type, faction, source = null, free = false) {
 
 function spawnUnit(type, faction, x, z, free = false) {
   const definition = UNIT_TYPES[type];
-  const renownMul = faction.player ? 1 + renownBonus : 1; // your civilization grows stronger with Renown
-  const hp = Math.round(definition.hp * (faction.bonus.unitHp ?? 1) * renownMul);
-  const damage = definition.damage * (faction.bonus.unitDamage ?? 1) * renownMul;
+  const hp = Math.round(definition.hp * (faction.bonus.unitHp ?? 1) * (faction.player ? playerHpMul : 1));
+  const damage = definition.damage * (faction.bonus.unitDamage ?? 1) * (faction.player ? playerDmgMul : 1);
   const speed = definition.speed * (faction.bonus.speed ?? 1);
   const texture = createUnitTexture(type, faction);
   const material = new THREE.SpriteMaterial({ map: texture, transparent: true, depthWrite: false });
@@ -2075,7 +2082,7 @@ function updateWorker(unit, dt) {
       unit.harvestTimer = 0.55;
       const boost = 1 + structureCount(unit.faction, "refinery") * 0.12;
       // ponytail: non-depleting nodes — an AFK economy should never permanently dry up, so every civ keeps fielding armies
-      unit.cargo = 8 * (unit.faction.bonus.gather ?? 1) * boost;
+      unit.cargo = 8 * (unit.faction.bonus.gather ?? 1) * boost * (unit.faction.player ? playerEcoMul : 1);
       unit.cargoType = node.type;
     }
   }
@@ -2846,9 +2853,9 @@ function costTitle(cost = {}) {
 
 function loadStats() {
   try {
-    return JSON.parse(localStorage.getItem(SAVE_KEY)) ?? { sessions: 0, bestTime: 0, bestKills: 0, wins: 0, renown: 0 };
+    return JSON.parse(localStorage.getItem(SAVE_KEY)) ?? { sessions: 0, bestTime: 0, bestKills: 0, wins: 0, renown: 0, upgrades: { dmg: 0, hp: 0, eco: 0 } };
   } catch {
-    return { sessions: 0, bestTime: 0, bestKills: 0, wins: 0, renown: 0 };
+    return { sessions: 0, bestTime: 0, bestKills: 0, wins: 0, renown: 0, upgrades: { dmg: 0, hp: 0, eco: 0 } };
   }
 }
 
@@ -2894,8 +2901,33 @@ function updateMenuStats() {
   menuBestKills.textContent = stats.bestKills ?? 0;
   menuWins.textContent = stats.wins ?? 0;
   const renown = stats.renown ?? 0;
-  if (menuRenown) menuRenown.textContent = `${renown} · +${Math.round(Math.min(0.5, renown / 1000) * 100)}%`;
+  if (menuRenown) menuRenown.textContent = renown;
   if (offlineNote) offlineNote.textContent = game.offlineEarned > 0 ? `Your lands earned ${game.offlineEarned} Renown while you were away.` : "";
+  const ups = stats.upgrades ?? {};
+  for (const cell of document.querySelectorAll(".upgrade-cell")) {
+    const def = UPGRADES.find((u) => u.id === cell.dataset.upgrade);
+    if (!def) continue;
+    const lvl = ups[def.id] ?? 0;
+    const maxed = lvl >= def.max;
+    const cost = upgradeCost(lvl);
+    cell.querySelector("strong").textContent = maxed ? `Lv ${lvl} · MAX` : `Lv ${lvl} · ${cost}`;
+    cell.disabled = maxed || renown < cost;
+  }
+}
+
+function buyUpgrade(id) {
+  const def = UPGRADES.find((u) => u.id === id);
+  if (!def) return;
+  const stats = loadStats();
+  const ups = stats.upgrades ?? { dmg: 0, hp: 0, eco: 0 };
+  const lvl = ups[id] ?? 0;
+  const cost = upgradeCost(lvl);
+  if (lvl >= def.max || (stats.renown ?? 0) < cost) return;
+  stats.renown -= cost;
+  ups[id] = lvl + 1;
+  stats.upgrades = ups;
+  saveStats(stats);
+  updateMenuStats();
 }
 
 function setMenuOpen(open) {
@@ -2915,7 +2947,10 @@ function setPaused(paused, showPauseMenu = false) {
 }
 
 function startGame() {
-  renownBonus = Math.min(0.5, (loadStats().renown ?? 0) / 1000); // up to +50% at 1000 Renown
+  const ups = loadStats().upgrades ?? {}; // apply purchased Renown upgrades to the player faction
+  playerDmgMul = 1 + 0.08 * (ups.dmg ?? 0);
+  playerHpMul = 1 + 0.08 * (ups.hp ?? 0);
+  playerEcoMul = 1 + 0.12 * (ups.eco ?? 0);
   game.offlineEarned = 0; // consumed once shown on the menu
   resetWorld();
   game.started = true;
@@ -2982,6 +3017,9 @@ function bindEvents() {
   zoomOutButton.addEventListener("click", () => zoomCamera(1.14));
   pauseToggle.addEventListener("click", togglePause);
   startSkirmishButton.addEventListener("click", startGame);
+  for (const btn of document.querySelectorAll(".upgrade-cell")) {
+    btn.addEventListener("click", () => buyUpgrade(btn.dataset.upgrade));
+  }
   resumeGameButton.addEventListener("click", () => setPaused(false));
   restartGameButton.addEventListener("click", startGame);
   exitToMenuButton.addEventListener("click", exitToMenu);

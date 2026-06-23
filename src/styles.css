@@ -832,3 +832,49 @@ body {
 .menu-offline:empty {
   display: none;
 }
+
+.upgrade-shop {
+  margin-top: 18px;
+}
+
+.upgrade-title {
+  margin: 0 0 8px;
+  color: #c8b991;
+  font-size: 0.66rem;
+  font-weight: 900;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.upgrade-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.upgrade-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  align-items: flex-start;
+  min-height: 56px;
+  padding: 9px 10px;
+  font-size: 0.72rem;
+  text-align: left;
+}
+
+.upgrade-cell span {
+  color: #e9dfc4;
+  line-height: 1.15;
+}
+
+.upgrade-cell strong {
+  color: #f0d77e;
+  font-variant-numeric: tabular-nums;
+}
+
+.upgrade-cell:disabled {
+  opacity: 0.45;
+  cursor: default;
+  filter: none;
+}
