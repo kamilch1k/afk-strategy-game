@@ -618,6 +618,20 @@ window.__afkStrategyDebug = {
     g.traverse((o) => { if (o.isMesh) meshes += 1; });
     return { id: f.id, style: f.style, meshes };
   }),
+  hqCrowdProbe: () => {
+    let army = 0, attacking = 0, guarding = 0, nearHq = 0, idleAtHq = 0;
+    for (const u of units) {
+      if (!u.alive || u.role !== "army") continue;
+      army += 1;
+      if (u.order?.type === "attack") attacking += 1;
+      if (u.order?.type === "guard") guarding += 1;
+      const hq = u.faction.hq;
+      const near = hq?.alive && u.position.distanceToSquared(hq.position) < 81; // within 9 of own HQ
+      if (near) nearHq += 1;
+      if (near && u.order?.type !== "attack") idleAtHq += 1;
+    }
+    return { army, attacking, guarding, nearHq, idleAtHq, pctIdleAtHq: army ? Math.round(100 * idleAtHq / army) : 0, pctAttacking: army ? Math.round(100 * attacking / army) : 0 };
+  },
   academyProbe: () => factions.map((f) => {
     const g = createStructureModel("academy", f);
     let meshes = 0;
@@ -1929,6 +1943,8 @@ function resetWorld() {
     const hq = createStructure("hq", faction, faction.start.x, faction.start.z, true);
     faction.hq = hq;
     faction.rallyPoint.copy(hq.position);
+    faction.rallyPoint.x += -hq.position.x * 0.28; // muster forward toward the map centre, off the HQ
+    faction.rallyPoint.z += -hq.position.z * 0.28;
     for (let i = 0; i < 5; i += 1) {
       spawnUnit("worker", faction, hq.position.x + rand(-3.5, 3.5), hq.position.z + rand(-3.5, 3.5), true);
     }
@@ -2039,6 +2055,7 @@ function spawnUnit(type, faction, x, z, free = false) {
     cargoType: null,
     cargo: 0,
     harvestTimer: 0,
+    musterOffset: new THREE.Vector3(rand(-5.5, 5.5), 0, rand(-5.5, 5.5)), // own slot at the rally point, so the garrison spreads instead of orbiting one spot
     frameSeed: Math.random() * 100,
     baseDamage: damage,
     baseMaxHp: hp,
@@ -2340,8 +2357,11 @@ function updateCombatUnit(unit, dt) {
   // Guard: sally out to meet nearby enemies (big, visible defensive battles), else hold the rally point.
   if (unit.order.type === "guard") {
     const threat = nearestEnemyEntity(unit.position, unit.faction, 24);
-    if (threat) fireOrAdvance(unit, threat, dt);
-    else navigateTo(unit, unit.faction.rallyPoint ?? unit.faction.hq.position, dt, 2.4);
+    if (threat) { fireOrAdvance(unit, threat, dt); return; }
+    // hold at a forward muster point, each unit to its own slot, instead of all stacking on the HQ and orbiting it
+    tmpPoint.copy(unit.faction.rallyPoint ?? unit.faction.hq.position);
+    if (unit.musterOffset) tmpPoint.add(unit.musterOffset);
+    navigateTo(unit, tmpPoint, dt, 1.0);
     return;
   }
   // Attack order = drive on an enemy base. Fight what you meet on the way (units used to march straight past
@@ -2671,14 +2691,15 @@ function thinkFaction(faction, dt) {
 
   // (Local defense is handled per-unit in updateCombatUnit's guard state — no army-wide recall needed.)
   const ready = armyUnits(faction);
-  const waveMin = Math.max(6, Math.floor(targetArmy * 0.4));
+  const waveMin = Math.max(5, Math.floor(targetArmy * 0.33));
   const escalation = clamp(game.time / 330, 0, 1); // total war ramps up over ~5.5 min so games conclude
-  if (faction.waveTimer <= 0 && ready.length >= waveMin && Math.random() < directive.aggression + 0.25 + escalation * 0.3) {
+  if (faction.waveTimer <= 0 && ready.length >= waveMin && Math.random() < directive.aggression + 0.35 + escalation * 0.3) {
     const target = enemyHqTarget(faction);
     if (target) {
-      const count = Math.max(waveMin, Math.floor(ready.length * lerp(0.6, 0.95, escalation))); // commit a strike force, keep a home garrison early
+      // commit most of the army so it actually fights instead of idling at home; keep a small garrison to avoid mutual-kill draws
+      const count = Math.max(waveMin, Math.floor(ready.length * lerp(0.75, 0.92, escalation)));
       for (const unit of ready.slice(0, count)) unit.order = { type: "attack", target, objective: target };
-      faction.waveTimer = lerp(30, 12, directive.aggression) * (1 - escalation * 0.45) + rand(0, 6);
+      faction.waveTimer = lerp(20, 8, directive.aggression) * (1 - escalation * 0.45) + rand(0, 4); // strike more often
       logEvent(`${faction.shortName} launches a strike at ${target.faction.shortName}.`);
     }
   }
