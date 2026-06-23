@@ -215,6 +215,12 @@ body.menu-open #world {
   font-variant-numeric: tabular-nums;
 }
 
+.icon-button.active {
+  background: linear-gradient(180deg, #3f6b3a, #2c5128);
+  border-color: rgba(190, 230, 150, 0.6);
+  color: #eaf7df;
+}
+
 .left-panel,
 .right-panel {
   position: fixed;

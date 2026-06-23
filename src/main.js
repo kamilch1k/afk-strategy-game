@@ -422,6 +422,7 @@ let hoverEntity = null;
 let uiTimer = 0;
 let gameSpeed = 1; // fast-forward multiplier (1/2/4): runs that many sim sub-steps per frame
 const combatFocus = { x: 0, z: 0, time: -999 }; // EMA of where fighting is happening, for the Focus-battle camera button
+let autoSpectate = false; // when on, the camera auto-follows combatFocus each sim step (any manual pan cancels it)
 let playerDmgMul = 1; // player-unit multipliers from purchased Renown upgrades (recomputed each game)
 let playerHpMul = 1;
 let playerEcoMul = 1;
@@ -500,6 +501,7 @@ window.__afkStrategyDebug = {
     started: game.started,
     paused: game.paused,
     gameSpeed,
+    autoSpectate,
     units: units.filter((u) => u.alive).length,
     withPath: units.filter((u) => u.alive && u.path).length,
     pathQueue: pathQueue.length,
@@ -599,6 +601,9 @@ window.__afkStrategyDebug = {
     focusBattle();
     return { targetX: Number(cameraState.target.x.toFixed(2)), targetZ: Number(cameraState.target.z.toFixed(2)) };
   },
+  cameraTarget: () => ({ x: Number(cameraState.target.x.toFixed(2)), z: Number(cameraState.target.z.toFixed(2)) }),
+  nudgeCamera: (x, z) => { cameraState.target.x = x; cameraState.target.z = z; return true; },
+  spectate: (on) => { setSpectate(!!on); return autoSpectate; },
 };
 
 const pointer = {
@@ -2700,6 +2705,7 @@ function rotateCamera(dx, dy) {
 }
 
 function panCamera(dx, dy) {
+  cancelSpectate(); // manual pan takes over from auto-follow
   const scale = cameraState.distance / Math.min(window.innerWidth, window.innerHeight) * 0.72;
   // drag the map: the world follows the cursor (both axes)
   cameraState.target.addScaledVector(PAN_RIGHT, -dx * scale);
@@ -2710,6 +2716,7 @@ function panCamera(dx, dy) {
 
 function updateKeyboardCamera(dt) {
   const speed = cameraState.distance * dt * 0.42;
+  if (autoSpectate && (keys.has("KeyW") || keys.has("KeyS") || keys.has("KeyA") || keys.has("KeyD") || keys.has("ArrowUp") || keys.has("ArrowDown") || keys.has("ArrowLeft") || keys.has("ArrowRight"))) cancelSpectate();
   if (keys.has("KeyW") || keys.has("ArrowUp")) cameraState.target.addScaledVector(PAN_FORWARD, -speed);
   if (keys.has("KeyS") || keys.has("ArrowDown")) cameraState.target.addScaledVector(PAN_FORWARD, speed);
   if (keys.has("KeyA") || keys.has("ArrowLeft")) cameraState.target.addScaledVector(PAN_RIGHT, -speed);
@@ -2742,6 +2749,7 @@ function zoomCamera(factor) {
 }
 
 function resetCamera() {
+  cancelSpectate();
   cameraState.target.copy(playerFaction?.hq?.position ?? new THREE.Vector3(0, 0, 0));
   cameraState.target.y = CAMERA_LOOK_HEIGHT;
   cameraState.distance = 135;
@@ -2760,6 +2768,21 @@ function focusBattle() {
   cameraState.target.x = clamp(combatFocus.x, -HALF_MAP + 8, HALF_MAP - 8);
   cameraState.target.z = clamp(combatFocus.z, -HALF_MAP + 8, HALF_MAP - 8);
   updateCamera();
+}
+
+function setSpectate(on) {
+  autoSpectate = on;
+  focusBattleButton?.classList.toggle("active", on);
+  if (focusBattleButton) focusBattleButton.title = on ? "Following the battle — click to stop" : "Follow the battle";
+}
+
+function toggleSpectate() {
+  setSpectate(!autoSpectate);
+  if (autoSpectate && combatFocus.time > game.time - 8) focusBattle();
+}
+
+function cancelSpectate() {
+  if (autoSpectate) setSpectate(false);
 }
 
 function setDirective(id) {
@@ -3069,6 +3092,7 @@ function bindEvents() {
   });
   resetViewButton.addEventListener("click", resetCamera);
   minimapCanvas?.addEventListener("click", (event) => {
+    cancelSpectate();
     const rect = minimapCanvas.getBoundingClientRect();
     const wx = ((event.clientX - rect.left) / rect.width) * MAP_SIZE - HALF_MAP;
     const wz = ((event.clientY - rect.top) / rect.height) * MAP_SIZE - HALF_MAP;
@@ -3080,7 +3104,7 @@ function bindEvents() {
   zoomOutButton.addEventListener("click", () => zoomCamera(1.14));
   pauseToggle.addEventListener("click", togglePause);
   speedToggle?.addEventListener("click", cycleSpeed);
-  focusBattleButton?.addEventListener("click", focusBattle);
+  focusBattleButton?.addEventListener("click", toggleSpectate);
   startSkirmishButton.addEventListener("click", startGame);
   for (const btn of document.querySelectorAll(".upgrade-cell")) {
     btn.addEventListener("click", () => buyUpgrade(btn.dataset.upgrade));
@@ -3202,6 +3226,11 @@ function stepSimulation(dt) {
   updateSuddenDeath(dt);
   checkWinner();
   updateMessage();
+  if (autoSpectate && combatFocus.time > game.time - 8) {
+    const k = Math.min(1, dt * 1.6); // ease the camera toward the fighting
+    cameraState.target.x += (clamp(combatFocus.x, -HALF_MAP + 8, HALF_MAP - 8) - cameraState.target.x) * k;
+    cameraState.target.z += (clamp(combatFocus.z, -HALF_MAP + 8, HALF_MAP - 8) - cameraState.target.z) * k;
+  }
 }
 
 function animate() {
