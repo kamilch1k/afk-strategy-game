@@ -208,6 +208,13 @@ body.menu-open #world {
   stroke-width: 2.4;
 }
 
+.speed-button {
+  font-size: 13px;
+  font-weight: 700;
+  color: #f4efe1;
+  font-variant-numeric: tabular-nums;
+}
+
 .left-panel,
 .right-panel {
   position: fixed;

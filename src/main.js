@@ -52,6 +52,7 @@ const hqReadout = document.querySelector("#hqReadout");
 const hqMeter = document.querySelector("#hqMeter");
 const timeReadout = document.querySelector("#timeReadout");
 const pauseToggle = document.querySelector("#pauseToggle");
+const speedToggle = document.querySelector("#speedToggle");
 const resetViewButton = document.querySelector("#resetView");
 const zoomInButton = document.querySelector("#zoomIn");
 const zoomOutButton = document.querySelector("#zoomOut");
@@ -418,6 +419,7 @@ let playerFaction = null;
 let skySphere = null;
 let hoverEntity = null;
 let uiTimer = 0;
+let gameSpeed = 1; // fast-forward multiplier (1/2/4): runs that many sim sub-steps per frame
 let playerDmgMul = 1; // player-unit multipliers from purchased Renown upgrades (recomputed each game)
 let playerHpMul = 1;
 let playerEcoMul = 1;
@@ -495,6 +497,7 @@ window.__afkStrategyDebug = {
     time: Number(game.time.toFixed(2)),
     started: game.started,
     paused: game.paused,
+    gameSpeed,
     units: units.filter((u) => u.alive).length,
     withPath: units.filter((u) => u.alive && u.path).length,
     pathQueue: pathQueue.length,
@@ -2990,6 +2993,14 @@ function togglePause() {
   else setPaused(true, true);
 }
 
+function cycleSpeed() {
+  gameSpeed = gameSpeed === 1 ? 2 : gameSpeed === 2 ? 4 : 1;
+  if (speedToggle) {
+    speedToggle.textContent = `${gameSpeed}×`;
+    speedToggle.title = `Speed ${gameSpeed}× — click to change`;
+  }
+}
+
 function bindEvents() {
   canvas.addEventListener("contextmenu", (event) => event.preventDefault());
   canvas.addEventListener("auxclick", (event) => event.preventDefault());
@@ -3029,6 +3040,7 @@ function bindEvents() {
   zoomInButton.addEventListener("click", () => zoomCamera(0.86));
   zoomOutButton.addEventListener("click", () => zoomCamera(1.14));
   pauseToggle.addEventListener("click", togglePause);
+  speedToggle?.addEventListener("click", cycleSpeed);
   startSkirmishButton.addEventListener("click", startGame);
   for (const btn of document.querySelectorAll(".upgrade-cell")) {
     btn.addEventListener("click", () => buyUpgrade(btn.dataset.upgrade));
@@ -3156,7 +3168,7 @@ function animate() {
   requestAnimationFrame(animate);
   let dt = Math.min(clock.getDelta(), 0.05);
   if (!game.started || game.paused) dt = 0;
-  if (dt > 0) stepSimulation(dt);
+  if (dt > 0) for (let i = 0; i < gameSpeed; i += 1) stepSimulation(dt);
   if (skySphere) skySphere.rotation.y += dt * 0.01;
   enforceStructureAnchors();
   updateCamera();
